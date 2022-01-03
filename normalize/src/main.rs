@@ -1,4 +1,6 @@
-fn normalize(str: &mut Vec<u8>) {
+use ascii::AsciiString;
+
+fn normalize(str: &mut AsciiString) {
     let mut w = 0;
     let mut is_space = false;
     for i in 0..str.len() {
@@ -35,18 +37,14 @@ mod tests {
     use super::*;
     #[test]
     fn test1() {
-        let mut str = String::from("asd  ASD");
-        unsafe {
-            normalize(str.as_mut_vec());
-        }
+        let mut str = AsciiString::from_ascii("asd  ASD".to_string()).unwrap();
+        normalize(&mut str);
         assert_eq!(str, "asd ASD");
     }
 }
 
 fn main() {
-    let mut str = String::from("asd  ASD");
-    unsafe {
-        normalize(str.as_mut_vec());
-    }
+    let mut str = AsciiString::from_ascii("asd  ASD".to_string()).unwrap();
+    normalize(&mut str);
     println!("{}", str);
 }
