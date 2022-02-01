@@ -185,6 +185,73 @@ mod bitreader_tests {
     }
 }
 
+enum OsKind {
+    Fat, // osflag = 0
+    Omega, // 1
+    Vms, // 2
+    Unix, // 3
+    Vm, // 4
+    Atari, // 5
+    Hpfs, // 6
+    Mac, // 7, stands for old, pre-unix macs
+    Z, // 8
+    CPM, // 9
+    TOPS, // 10
+    NTFS, // 11
+    QDOS, // 12
+    Acorn, // 13
+    Unknown, // 255
+}
+
+struct Os {
+    kind: OsKind
+}
+
+impl Os {
+    fn from_bits(bits: u8) -> Os {
+        let kind = match bits {
+            0 => OsKind::Fat,
+            1 => OsKind::Omega,
+            2 => OsKind::Vms,
+            3 => OsKind::Unix,
+            4 => OsKind::Vm,
+            5 => OsKind::Atari,
+            6 => OsKind::Hpfs,
+            7 => OsKind::Mac,
+            8 => OsKind::Z,
+            9 => OsKind::CPM,
+            10 => OsKind::TOPS,
+            11 => OsKind::NTFS,
+            12 => OsKind::QDOS,
+            13 => OsKind::Acorn,
+            255 => OsKind::Unknown,
+            _ => panic!()
+        };
+        Self { kind }
+    }
+
+    fn to_string(&self) -> String {
+        let slice = match self.kind {
+            OsKind::Fat => "Fat",
+            OsKind::Omega => "Omega",
+            OsKind::Vms => "Vms",
+            OsKind::Unix => "Unix",
+            OsKind::Vm => "Vm",
+            OsKind::Atari => "Atari",
+            OsKind::Hpfs => "Hpfs",
+            OsKind::Mac => "Mac",
+            OsKind::Z => "Z",
+            OsKind::CPM => "CPM",
+            OsKind::TOPS => "TOPS",
+            OsKind::NTFS => "NTFS",
+            OsKind::QDOS => "QDOS",
+            OsKind::Acorn => "Acorn",
+            OsKind::Unknown => "Unknown",
+        };
+        slice.to_string()
+    }
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     let filename = args[1].clone();
@@ -211,8 +278,8 @@ fn main() {
     println!("mtime: {}", mtime);
     let xfl = reader.read_bits(8).unwrap();
     println!("xfl: {}", xfl.bits);
-    let os = reader.read_bits(8).unwrap();
-    println!("os: {}", os.bits);
+    let os = Os::from_bits(reader.read_bits(8).unwrap().bits as u8);
+    println!("os: {}", os.to_string());
     let original_filename = reader.read_cstr().unwrap();
     println!("original filename: {}", original_filename);
     println!("Hello world!");
