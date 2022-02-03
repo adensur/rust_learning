@@ -1,22 +1,26 @@
+use std::collections::HashMap;
+use crc::crc32;
 use std::env;
 use std::fs;
 use std::io;
 use std::io::Read; // read_exact
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+const MAX_BITS: usize = 16;
+
+#[derive(Debug, PartialEq, Copy, Clone, Eq, Hash)]
 struct BitSequence {
     bits: u16,
     len: u8,
 }
 
 impl BitSequence {
-    fn new(mut bits: u8, len: u8) -> Self {
-        assert!(len <= 8);
-        if len < 8 {
+    fn new(mut bits: u16, len: u8) -> Self {
+        assert!(len <= 16);
+        if len < 16 {
             let mask = (1 << len) - 1;
             bits = bits & mask;
         }
-        Self{ bits: bits as u16, len }
+        Self{ bits: bits, len }
     }
 
     fn empty() -> Self {
@@ -36,10 +40,20 @@ impl BitSequence {
         // cuts off and returns leftmost len bits
         assert!(len <= self.len);
         let new_len = self.len - len;
-        let other = BitSequence::new((self.bits) as u8, len);
+        let other = BitSequence::new(self.bits, len);
         self.bits >>= len;
         self.len = new_len;
         other
+    }
+    pub fn from_reflected(mut bits: u8, len: u8) -> Self {
+        let mut reflection = 0;
+        for bit in 0..len {
+            if bits & 0b1 > 0 {
+                reflection |= 1 << ((len - 1) - bit);
+            }
+            bits >>= 1;
+        }
+        Self::new(reflection, len)
     }
 }
 
@@ -104,7 +118,7 @@ where
         let mut buf = [0u8; 1];
         let res = self.reader.read_exact(&mut buf);
         res.and_then(|_| {
-            self.buf = self.buf.concat(BitSequence::new(buf[0], 8));
+            self.buf = self.buf.concat(BitSequence::new(buf[0] as u16, 8));
             Ok(self.buf.take(len))
         })
     }
@@ -120,8 +134,8 @@ where
                     tmp += (buf[i] as u64) << shift;
                     shift += 8;
                 }
-                let result = (tmp >> self.buf.len) as u32;
-                self.buf = BitSequence::new(tmp as u8, self.buf.len);
+                let result = tmp as u32; // take least significant 32 bits
+                self.buf = BitSequence::new((tmp >> 32) as u16, self.buf.len);
                 Ok(result)
             })
     }
@@ -140,6 +154,9 @@ where
                 Err(error) => return Err(error)
             }
         }
+    }
+    fn drop_buffer(&mut self) {
+        self.buf = BitSequence::empty();
     }
 }
 
@@ -252,6 +269,157 @@ impl Os {
     }
 }
 
+enum BTypeKind {
+    Uncompressed,
+    StaticHuffman,
+    DynamicHuffman,
+    Reserved,
+}
+
+struct BType {
+    btype: BTypeKind,
+}
+
+impl BType {
+    fn from_bits(bits: u8) -> Self {
+        let btype = match bits {
+            0 => BTypeKind::Uncompressed,
+            1 => BTypeKind::StaticHuffman,
+            2 => BTypeKind::DynamicHuffman,
+            3 => BTypeKind::Reserved,
+            _ => panic!(),
+        };
+        Self { btype }
+    }
+
+    fn to_string(&self) -> String {
+        let slice = match self.btype {
+            BTypeKind::Uncompressed => "Uncompressed",
+            BTypeKind::StaticHuffman => "StaticHuffman",
+            BTypeKind::DynamicHuffman => "DynamicHuffman",
+            BTypeKind::Reserved => "Reserved",
+        };
+        slice.to_string()
+    }
+}
+
+struct HuffmanDecoder {
+    map: HashMap<BitSequence, u16>,
+}
+
+impl HuffmanDecoder {
+    fn from_lengths(code_lengths: &[u8]) -> Self {
+        // See RFC 1951, section 3.2.2.
+        // calc counts
+        let mut counts: Vec<u16> = Vec::new();
+        let mut total_count = 0u16;
+        counts.resize(MAX_BITS + 1, 0);
+        for &code_len in code_lengths {
+            counts[code_len as usize] += 1;
+            total_count += 1;
+        }
+        // calc first symbol for every len
+        assert!(total_count <= u16::MAX);
+        let mut codes: Vec<u16> = Vec::new();
+        codes.resize(MAX_BITS + 1, 0);
+        let mut code: u16 = 0;
+        for bit_len in 1..=MAX_BITS {
+            // starting code for given bitlen
+            code = (code + counts[bit_len - 1]) << 1;
+            codes[bit_len] = code;
+        }
+        let mut result: HashMap<BitSequence, u16> = HashMap::new();
+        for (symbol, &code_len) in code_lengths.into_iter().enumerate() {
+            let code = codes[code_len as usize];
+            // store bits as little-endian
+            let bit_sequence = BitSequence::new(code, code_len);
+            result.insert(bit_sequence, symbol as u16);
+            codes[code_len as usize] += 1;
+        }
+        Self{map: result}
+    }
+
+    fn decode_symbol(&self, seq: BitSequence) -> Option<u16> {
+        self.map.get(&seq).cloned()
+    }
+
+    fn read_symbol<U: Read>(&self, bit_reader: &mut BitReader<U>) -> Result<u16, io::Error> {
+        let mut cur = BitSequence::new(0, 0);
+        loop {
+            let symbol = bit_reader.read_bits(1)?;
+            cur = cur.concat(symbol);
+            if let Some(&result) = self.map.get(&BitSequence::from_reflected(cur.bits as u8, cur.len)) {
+                return Ok(result);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod huffman_tests {
+    use super::*;
+    #[test]
+    fn test1() {
+        let lengths: &[u8] = &[2, 3, 4, 3, 3, 4, 2];
+        let decoder = HuffmanDecoder::from_lengths(lengths);
+        assert_eq!(decoder.decode_symbol(BitSequence::new(0b00, 2)).unwrap(), 0);
+        assert_eq!(decoder.decode_symbol(BitSequence::new(0b100, 3)).unwrap(), 1);
+        assert_eq!(decoder.decode_symbol(BitSequence::new(0b1110, 4)).unwrap(), 2);
+        assert_eq!(decoder.decode_symbol(BitSequence::new(0b101, 3)).unwrap(), 3);
+        assert_eq!(decoder.decode_symbol(BitSequence::new(0b110, 3)).unwrap(), 4);
+        assert_eq!(decoder.decode_symbol(BitSequence::new(0b1111, 4)).unwrap(), 5);
+        assert_eq!(decoder.decode_symbol(BitSequence::new(0b01, 2)).unwrap(), 6);
+
+        assert_eq!(decoder.decode_symbol(BitSequence::new(0b0, 1)), None);
+        assert_eq!(decoder.decode_symbol(BitSequence::new(0b10, 2)), None);
+        assert_eq!(decoder.decode_symbol(BitSequence::new(0b111, 3)), None);
+    }
+
+    #[test]
+    fn test2() -> Result<(), io::Error> {
+        let decoder = HuffmanDecoder::from_lengths(&[2, 3, 4, 3, 3, 4, 2]);
+        let mut data: &[u8] = &[0b10111001, 0b11001010, 0b11101101];
+        let mut reader = BitReader::new(&mut data);
+        assert_eq!(decoder.read_symbol(&mut reader)?, 1);
+        assert_eq!(decoder.read_symbol(&mut reader)?, 2);
+        assert_eq!(decoder.read_symbol(&mut reader)?, 3);
+        assert_eq!(decoder.read_symbol(&mut reader)?, 6);
+        assert_eq!(decoder.read_symbol(&mut reader)?, 0);
+        assert_eq!(decoder.read_symbol(&mut reader)?, 2);
+        assert_eq!(decoder.read_symbol(&mut reader)?, 4);
+        assert!(decoder.read_symbol(&mut reader).is_err());
+
+        Ok(())
+    }
+}
+
+fn create_static_litlen_decoder() -> HuffmanDecoder {
+    // see https://datatracker.ietf.org/doc/html/rfc1951#section-3.2.6
+    let mut lengths: Vec<u8> = Vec::with_capacity(288);
+    for _ in 0..=143 {
+        lengths.push(8);
+    }
+    for _ in 144..=255 {
+        lengths.push(9);
+    }
+    for _ in 256..=279 {
+        lengths.push(7);
+    }
+    for _ in 280..=287 {
+        lengths.push(8);
+    }
+    HuffmanDecoder::from_lengths(lengths.as_ref())
+}
+
+fn create_static_dist_decoder() -> HuffmanDecoder {
+    // see https://datatracker.ietf.org/doc/html/rfc1951#section-3.2.6
+    let mut lengths: Vec<u8> = Vec::with_capacity(32);
+    for _ in 0..=31 {
+        lengths.push(5);
+    }
+    HuffmanDecoder::from_lengths(lengths.as_ref())
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     let filename = args[1].clone();
@@ -280,7 +448,43 @@ fn main() {
     println!("xfl: {}", xfl.bits);
     let os = Os::from_bits(reader.read_bits(8).unwrap().bits as u8);
     println!("os: {}", os.to_string());
-    let original_filename = reader.read_cstr().unwrap();
-    println!("original filename: {}", original_filename);
-    println!("Hello world!");
+    if fname {
+        let original_filename = reader.read_cstr().unwrap();
+        println!("original filename: {}", original_filename);
+    }
+
+    // start reading deflate blocks
+    let is_last = reader.read_bits(1).unwrap().bits > 0;
+    println!("Is last: {}", is_last);
+    let btype = BType::from_bits(reader.read_bits(2).unwrap().bits as u8);
+    println!("Btype: {:?}", btype.to_string());
+    match btype.btype {
+        BTypeKind::StaticHuffman => {
+            let litlen_decoder = create_static_litlen_decoder();
+            let dist_decoder = create_static_dist_decoder();
+            let mut decoded = String::new();
+            loop {
+                let symbol = litlen_decoder.read_symbol(&mut reader).unwrap();
+                match symbol {
+                    0..=255 => decoded.push(symbol as u8 as char),
+                    256 => break, // end of block
+                    257..=285 => {
+                        // we have len token on our hands!
+                        println!("Got len token: {}", symbol);
+                        return;
+                    },
+                    _ => panic!(),
+                }
+            }
+            println!("Remaining buffer: {:?}", reader.buf);
+            reader.drop_buffer();
+            println!("Decoded str: {}", decoded);
+            let crc = reader.read_u32().unwrap();
+            let isize = reader.read_u32().unwrap();
+            println!("crc: {}, decoded crc: {}, isize: {}", crc, crc::crc32::checksum_ieee(decoded.as_bytes()), isize);
+            assert_eq!(crc, crc::crc32::checksum_ieee(decoded.as_bytes()));
+            assert!(reader.read_bits(8).is_err());
+        },
+        _ => panic!(),
+    }
 }
