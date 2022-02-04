@@ -401,7 +401,7 @@ fn generate_distlen_str(length: u16, dist: u16, history: &[u8]) -> Vec<u8> {
     // abcabcabcabca
     // take 3 symbols from history
     // repeat 3 times, then take 1 symbol from the last time
-    assert!(history.len() >= length as usize);
+    assert!(history.len() >= dist as usize);
     let mut result: Vec<u8> = Vec::with_capacity(length as usize);
     let template = &history[(history.len() - dist as usize)..];
     result.extend(template.iter().cycle().take(length as usize));
@@ -577,6 +577,19 @@ mod static_deflate_tests {
         let decoded = decoder.read_block(&mut reader);
         assert_eq!(decoded, "Hello world!\n".as_bytes())
     }
+
+    #[test]
+    fn test2() {
+        let decoder = StaticHuffmanDeflateDecoder::new();
+        let buf: &[u8] = &[0x4b, 0x4c, 0x44, 0x06, 0x5c, 0x00, 0xa1, 0x84, 0xf7, 0xb9, 0x0f, 0x00, 0x00, 0x00,];
+        let mut reader = BitReader::new(buf);
+        let is_last = reader.read_bits(1).unwrap().bits > 0;
+        assert_eq!(is_last, true);
+        let btype = BType::from_bits(reader.read_bits(2).unwrap().bits as u8);
+        assert_eq!(btype.btype, BTypeKind::StaticHuffman);
+        let decoded = decoder.read_block(&mut reader);
+        assert_eq!(decoded, "aaaaaaaaaaaaaa\n".as_bytes())
+    }
 }
 
 fn main() {
@@ -619,16 +632,9 @@ fn main() {
     println!("Btype: {:?}", btype.to_string());
     match btype.btype {
         BTypeKind::StaticHuffman => {
-            //let decoder = StaticHuffmanDeflateDecoder::new();
-            //let decoded = decoder.read_block(&mut reader);
-            //println!("Read str: {}", str::from_utf8(&decoded).unwrap());
-            let mut r: Vec<u8> = Vec::new();
-            for _ in 0..=21 {
-                r.push(reader.read_bits(8).unwrap().bits as u8);
-            }
-            println!("Raw bits for the block: {:?}", r);
-            let r2 = reader.read_bits(5).unwrap();
-            println!("Remaining bits: {:?}", r2);
+            let decoder = StaticHuffmanDeflateDecoder::new();
+            let decoded = decoder.read_block(&mut reader);
+            println!("Read str: {}", str::from_utf8(&decoded).unwrap());
         },
         _ => panic!(),
     }
