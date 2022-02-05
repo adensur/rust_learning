@@ -29,7 +29,7 @@ impl BitSequence {
     }
 
     fn concat(mut self, mut other: Self) -> Self {
-        debug_assert!(self.len + other.len <= 16);
+        assert!(self.len + other.len <= 16);
         other.bits <<= self.len;
         self.bits += other.bits;
         self.len += other.len;
@@ -46,6 +46,19 @@ impl BitSequence {
         self.len = new_len;
         other
     }
+
+    pub fn reflected(&self) -> Self {
+        let mut reflected_bits = 0u16;
+        let mut bits = self.bits;
+        for bit in 0..self.len {
+            if bits & 0b1 > 0 {
+                reflected_bits |= 1 << ((self.len - 1) - bit);
+            }
+            bits >>= 1;
+        }
+        Self::new(reflected_bits, self.len)
+    }
+
     pub fn from_reflected(mut bits: u16, len: u8) -> Self {
         let mut reflection = 0;
         for bit in 0..len {
@@ -89,6 +102,12 @@ mod bitsequence_tests {
         let seq4 = seq3.take(4);
         assert_eq!(seq4, BitSequence::new(0b1000, 4));
         assert_eq!(seq3, BitSequence::new(0b0001, 4));
+    }
+
+    #[test]
+    fn test2() {
+        let seq = BitSequence::new(0b00111, 5);
+        assert_eq!(seq.reflected(), BitSequence::new(0b11100, 5));
     }
 }
 
@@ -332,8 +351,11 @@ impl HuffmanDecoder {
         }
         let mut result: HashMap<BitSequence, u16> = HashMap::new();
         for (symbol, &code_len) in code_lengths.into_iter().enumerate() {
+            if code_len == 0 {
+                continue;
+            }
             let code = codes[code_len as usize];
-            // store bits as little-endian
+            // store bits as big-endian
             let bit_sequence = BitSequence::new(code, code_len);
             result.insert(bit_sequence, symbol as u16);
             codes[code_len as usize] += 1;
@@ -413,6 +435,127 @@ struct StaticHuffmanDeflateDecoder {
     dist_decoder: HuffmanDecoder,
 }
 
+fn length_table(symbol: u16) -> (u8, u16) { // offset, length
+    match symbol {
+        257 => (0, 3),
+        258 => (0, 4),
+        259 => (0, 5),
+        260 => (0, 6),
+        261 => (0, 7),
+        262 => (0, 8),
+        263 => (0, 9),
+        264 => (0, 10),
+        265 => (1, 11),
+        266 => (1, 13),
+        267 => (1, 15),
+        268 => (1, 17),
+        269 => (2, 19),
+        270 => (2, 23),
+        271 => (2, 27),
+        272 => (2, 31),
+        273 => (3, 35),
+        274 => (3, 43),
+        275 => (3, 51),
+        276 => (3, 59),
+        277 => (4, 67),
+        278 => (4, 83),
+        279 => (4, 99),
+        280 => (4, 115),
+        281 => (5, 131),
+        282 => (5, 163),
+        283 => (5, 195),
+        284 => (5, 227),
+        285 => (0, 258),
+        _ => panic!(),
+    }
+}
+
+fn dist_table(symbol: u16) -> (u8, u16) { // offset, length
+    match symbol {
+        0 => (0, 1),
+        1 => (0, 2),
+        2 => (0, 3),
+        3 => (0, 4),
+        4 => (1, 5),
+        5 => (1, 7),
+        6 => (2, 9),
+        7 => (2 , 13),
+        8 => (3, 17),
+        9 => (3, 25),
+        10 => (4, 33),
+        11 => (4, 49),
+        12 => (5, 65),
+        13 => (5, 97),
+        14 => (6, 129),
+        15 => (6, 193),
+        16 => (7, 257),
+        17 => (7, 385),
+        18 => (8, 513),
+        19 => (8, 769),
+        20 => (9, 1025),
+        21 => (9, 1537),
+        22 => (10, 2049),
+        23 => (10, 3073),
+        24 => (11, 4097),
+        25 => (11, 6145),
+        26 => (12, 8193),
+        27 => (12, 12289),
+        28 => (13, 16385),
+        29 => (13, 24577),
+        _ => panic!(),
+    }
+}
+
+fn read_len_token<T: Read>(symbol: u16, reader: &mut BitReader<T>) -> u16 {
+    let (offset, mut length) = length_table(symbol);
+    let offset_bits = reader.read_bits(offset).unwrap();
+    let actual_offset = BitSequence::new(offset_bits.bits, offset_bits.len).bits;
+    length += actual_offset;
+    length
+}
+
+fn read_dist_token<T: Read>(symbol: u16, reader: &mut BitReader<T>) -> u16 {
+    let (offset, mut dist) = dist_table(symbol);
+    let offset_bits = reader.read_bits(offset).unwrap();
+    let actual_offset = BitSequence::new(offset_bits.bits, offset_bits.len).bits;
+    dist += actual_offset;
+    dist
+}
+
+fn read_block<T: Read>(reader: &mut BitReader<T>, litlen_decoder: &HuffmanDecoder, dist_decoder: &HuffmanDecoder) -> Vec<u8> {
+    let mut decoded: Vec<u8> = Vec::new();
+    println!("Started block decoding!");
+    loop {
+        let symbol = litlen_decoder.read_symbol(reader).unwrap();
+        match symbol {
+            0..=255 => {
+                decoded.push(symbol as u8); 
+                println!("Read literal: {}", symbol);
+            },
+            256 => break, // end of block
+            257..=285 => {
+                // we have len token on our hands!
+                let length = read_len_token(symbol, reader);
+                let dist_symbol = dist_decoder.read_symbol(reader).unwrap();
+                let dist = read_dist_token(dist_symbol, reader);
+                let slice = generate_distlen_str(length, dist, decoded.as_ref());
+                println!("Read len + dist tokens, len: {}, dist: {}, got str: {}", length, dist, str::from_utf8(&slice).unwrap());
+                decoded.extend_from_slice(&slice);
+            },
+            _ => panic!(),
+        }
+    }
+    println!("Remaining buffer: {:?}", reader.buf);
+    reader.drop_buffer();
+    println!("Decoded str: {:?}", str::from_utf8(&decoded).unwrap());
+    let crc = reader.read_u32().unwrap();
+    let isize = reader.read_u32().unwrap();
+    println!("crc: {}, decoded crc: {}, isize: {}", crc, crc32::checksum_ieee(decoded.as_ref()), isize);
+    assert_eq!(crc, crc::crc32::checksum_ieee(decoded.as_ref()));
+    assert!(reader.read_bits(8).is_err());
+    decoded
+}
+
 impl StaticHuffmanDeflateDecoder {
     fn create_static_litlen_decoder() -> HuffmanDecoder {
         // see https://datatracker.ietf.org/doc/html/rfc1951#section-3.2.6
@@ -441,124 +584,93 @@ impl StaticHuffmanDeflateDecoder {
         HuffmanDecoder::from_lengths(lengths.as_ref())
     }
 
-    fn length_table(symbol: u16) -> (u8, u16) { // offset, length
-        match symbol {
-            257 => (0, 3),
-            258 => (0, 4),
-            259 => (0, 5),
-            260 => (0, 6),
-            261 => (0, 7),
-            262 => (0, 8),
-            263 => (0, 9),
-            264 => (0, 10),
-            265 => (1, 11),
-            266 => (1, 13),
-            267 => (1, 15),
-            268 => (1, 17),
-            269 => (2, 19),
-            270 => (2, 23),
-            271 => (2, 27),
-            272 => (2, 31),
-            273 => (3, 35),
-            274 => (3, 43),
-            275 => (3, 51),
-            276 => (3, 59),
-            277 => (4, 67),
-            278 => (4, 83),
-            279 => (4, 99),
-            280 => (4, 115),
-            281 => (5, 131),
-            282 => (5, 163),
-            283 => (5, 195),
-            284 => (5, 227),
-            285 => (0, 258),
-            _ => panic!(),
-        }
-    }
-    
-    fn dist_table(symbol: u16) -> (u8, u16) { // offset, length
-        match symbol {
-            0 => (0, 1),
-            1 => (0, 2),
-            2 => (0, 3),
-            3 => (0, 4),
-            4 => (1, 5),
-            5 => (1, 7),
-            6 => (2, 9),
-            7 => (2 , 13),
-            8 => (3, 17),
-            9 => (3, 25),
-            10 => (4, 33),
-            11 => (4, 49),
-            12 => (5, 65),
-            13 => (5, 97),
-            14 => (6, 129),
-            15 => (6, 193),
-            16 => (7, 257),
-            17 => (7, 385),
-            18 => (8, 513),
-            19 => (8, 769),
-            20 => (9, 1025),
-            21 => (9, 1537),
-            22 => (10, 2049),
-            23 => (10, 3073),
-            24 => (11, 4097),
-            25 => (11, 6145),
-            26 => (12, 8193),
-            27 => (12, 12289),
-            28 => (13, 16385),
-            29 => (13, 24577),
-            _ => panic!(),
-        }
-    }
-
     fn new() -> Self {
         Self { litlen_decoder: Self::create_static_litlen_decoder(), dist_decoder: Self::create_static_dist_decoder() }
     }
 
-    fn read_len_token<T: Read>(symbol: u16, reader: &mut BitReader<T>) -> u16 {
-        let (offset, mut length) = Self::length_table(symbol);
-        let offset_bits = reader.read_bits(offset).unwrap();
-        let actual_offset = BitSequence::from_reflected(offset_bits.bits, offset_bits.len).bits;
-        length += actual_offset;
-        length
-    }
-
-    fn read_dist_token<T: Read>(symbol: u16, reader: &mut BitReader<T>) -> u16 {
-        let (offset, mut dist) = Self::dist_table(symbol);
-        let offset_bits = reader.read_bits(offset).unwrap();
-        let actual_offset = BitSequence::from_reflected(offset_bits.bits, offset_bits.len).bits;
-        dist += actual_offset;
-        dist
-    }
-
     fn read_block<T: Read>(&self, reader: &mut BitReader<T>) -> Vec<u8> {
-        let mut decoded: Vec<u8> = Vec::new();
-        loop {
-            let symbol = self.litlen_decoder.read_symbol(reader).unwrap();
-            match symbol {
-                0..=255 => decoded.push(symbol as u8),
-                256 => break, // end of block
-                257..=285 => {
-                    // we have len token on our hands!
-                    let length = Self::read_len_token(symbol, reader);
-                    let dist_symbol = self.dist_decoder.read_symbol(reader).unwrap();
-                    let dist = Self::read_dist_token(dist_symbol, reader);
-                    decoded.extend_from_slice(generate_distlen_str(length, dist, decoded.as_ref()).as_ref());
-                },
-                _ => panic!(),
-            }
-        }
-        println!("Remaining buffer: {:?}", reader.buf);
-        reader.drop_buffer();
-        println!("Decoded str: {:?}", str::from_utf8(&decoded).unwrap());
-        let crc = reader.read_u32().unwrap();
-        let isize = reader.read_u32().unwrap();
-        println!("crc: {}, decoded crc: {}, isize: {}", crc, crc32::checksum_ieee(decoded.as_ref()), isize);
-        assert_eq!(crc, crc::crc32::checksum_ieee(decoded.as_ref()));
-        assert!(reader.read_bits(8).is_err());
-        decoded
+        read_block(reader, &self.litlen_decoder, &self.dist_decoder)
     }
+}
+
+// kraft-macmillan value
+fn kmm(lengths: &[u8]) -> f64 {
+    let mut kmm = 0f64;
+    for &i in lengths {
+        if i > 0u8 {
+            kmm += 1f64 / 2f64.powf(i as f64);
+        }
+    }
+    kmm
+}
+
+fn read_code_lengths<T: Read>(cl_decoder: &HuffmanDecoder, reader: &mut BitReader<T>, count: usize) -> Vec<u8> {
+    let mut result: Vec<u8> = Vec::with_capacity(count);
+    let mut i = 0usize;
+    while i < count {
+        i += 1;
+        let bits = cl_decoder.read_symbol(reader).unwrap();
+        match bits {
+            0..=15 => result.push(bits as u8),
+            16 => {
+                let offset = (reader.read_bits(2).unwrap().bits + 3) as usize;
+                let &prev = result.last().unwrap();
+                for _ in 0..offset {
+                    i += 1;
+                    result.push(prev);
+                }
+                i -= 1;
+            },
+            17..=18 => {
+                let mut offset = 0;
+                if bits == 17 {
+                    offset = (reader.read_bits(3).unwrap().bits + 3) as usize;
+                } else {
+                    offset = (reader.read_bits(7).unwrap().bits + 11) as usize;
+                }
+                for _ in 0..offset {
+                    i += 1;
+                    result.push(0);
+                }
+                i -= 1;
+            },
+            _ => panic!(),
+        }
+    }
+    result
+}
+
+fn decode_dynamic_huffman_deflate<T: Read>(reader: &mut BitReader<T>) -> Vec<u8> {
+    let hlit = 257 + reader.read_bits(5).unwrap().bits as usize; // count of litlen lemgth codes
+    let hdist = 1 + reader.read_bits(5).unwrap().bits as usize; // count of dist length codes
+    let hclen = 4 + reader.read_bits(4).unwrap().bits as usize; // count of CL length codes
+    println!("hclen: {}, hlit: {}, hdist: {}", hclen, hlit, hdist);
+    const CL_PERMUTATION: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+    let mut cl_lengths: Vec<u8> = vec![0; CL_PERMUTATION.len()];
+    // kraft macmillan formula
+    for i in 0..hclen {
+        let bits = reader.read_bits(3).unwrap().bits;
+        println!("Read cl code {} for symbol #{}, symbol value: {}", bits, i, CL_PERMUTATION[i]);
+        cl_lengths[CL_PERMUTATION[i]] = bits as u8;
+    }
+    let cl_kmm = kmm(&cl_lengths);
+    println!("Kraft macmillan for cl lengths: {}", cl_kmm);
+    assert!((1f64 - cl_kmm).abs() < 1e-7);
+    let cl_decoder = HuffmanDecoder::from_lengths(&cl_lengths);
+    // !!! This doesnt work!!! [ ]
+    // need some more complicated magic from RFC
+    let lit_lengths = read_code_lengths(&cl_decoder, reader, hlit);
+    assert_eq!(lit_lengths.len(), hlit);
+    let dist_lengths = read_code_lengths(&cl_decoder, reader, hdist);
+    assert_eq!(dist_lengths.len(), hdist);
+    let litlen_kmm = kmm(&lit_lengths);
+    let dist_kmm = kmm(&dist_lengths);
+    println!("Kraft macmillan for lit lengths: {}, for dist_lengths: {}", litlen_kmm, dist_kmm);
+    assert!((1f64 - litlen_kmm).abs() < 1e-7);
+    assert!((1f64 - dist_kmm).abs() < 1e-7);
+    let lit_decoder = HuffmanDecoder::from_lengths(&lit_lengths);
+    let dist_decoder = HuffmanDecoder::from_lengths(&dist_lengths);
+    read_block(reader, &lit_decoder, &dist_decoder)
 }
 
 #[cfg(test)]
@@ -589,6 +701,21 @@ mod static_deflate_tests {
         assert_eq!(btype.btype, BTypeKind::StaticHuffman);
         let decoded = decoder.read_block(&mut reader);
         assert_eq!(decoded, "aaaaaaaaaaaaaa\n".as_bytes())
+    }
+
+    #[test]
+    fn test3() {
+        let decoder = StaticHuffmanDeflateDecoder::new();
+        let buf: &[u8] = &[0x8b, 0x2e, 0x48, 0x4c, 0xce, 0x4e, 0x4c, 0x4f, 0x8d, 0xe5, 0xca, 0x4b, 0xcc, 0x4d, 0x55, 0xb0,
+        0x55, 0x50, 0x2a, 0xca, 0x2c, 0x48, 0xaf, 0xca, 0x2c, 0x50, 0xe2, 0x2a, 0x4b, 0x2d, 0x2a, 0xce, 0xcc, 0xcf, 0x03,
+        0x89, 0x19, 0xe8, 0x19, 0xea, 0x19, 0x28, 0x01, 0x00, 0xfd, 0x29, 0x36, 0x39, 0x2c, 0x00, 0x00, 0x00,];
+        let mut reader = BitReader::new(buf);
+        let is_last = reader.read_bits(1).unwrap().bits > 0;
+        assert_eq!(is_last, true);
+        let btype = BType::from_bits(reader.read_bits(2).unwrap().bits as u8);
+        assert_eq!(btype.btype, BTypeKind::StaticHuffman);
+        let decoded = decoder.read_block(&mut reader);
+        assert_eq!(decoded, "[package]\nname = \"ripgzip\"\nversion = \"0.1.0\"".as_bytes());
     }
 }
 
@@ -636,6 +763,10 @@ fn main() {
             let decoded = decoder.read_block(&mut reader);
             println!("Read str: {}", str::from_utf8(&decoded).unwrap());
         },
+        BTypeKind::DynamicHuffman => {
+            let decoded = decode_dynamic_huffman_deflate(&mut reader);
+            println!("Read str: {}", str::from_utf8(&decoded).unwrap());
+        }
         _ => panic!(),
     }
 }
