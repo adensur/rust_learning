@@ -49,7 +49,7 @@ impl BstSet {
             match node.key.cmp(&key) {
                 Ordering::Equal => break,
                 Ordering::Less => {
-                    //node_ptr = &mut node_ptr.as_mut().unwrap().right_ptr;
+                    // node_ptr = &mut node_ptr.as_mut().unwrap().right_ptr;
                     node_ptr = &mut node.right_ptr;
                 }
                 Ordering::Greater => {
