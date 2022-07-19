@@ -1,6 +1,7 @@
 use crate::structs::job_configuration::JobConfiguration;
 use crate::structs::job_configuration_query::JobConfigurationQuery;
 use crate::structs::job_reference::JobReference;
+use crate::structs::job_status::JobStatus;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -10,6 +11,8 @@ pub struct Job {
     pub configuration: Option<JobConfiguration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_reference: Option<JobReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<JobStatus>,
 }
 
 impl Job {
@@ -22,6 +25,7 @@ impl Job {
                 }),
             }),
             job_reference: None,
+            status: None,
         }
     }
 }
