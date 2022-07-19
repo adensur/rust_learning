@@ -20,7 +20,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("token is: {:?}, str: {}", tok, tok.as_str());
 
     let client = client::Client::new().await;
-    client.post_query(PROJECT_ID, "SELECT * FROM `bigquery-public-data.covid19_public_forecasts.county_14d_historical_` LIMIT 4;".into()).await?;
+    let job = client.post_query(PROJECT_ID, "SELECT * FROM `bigquery-public-data.covid19_public_forecasts.county_14d_historical_` LIMIT 4;".into()).await?;
+    println!("Created job: {:?}", job);
 
     /*if false {
         let api_url = format!(

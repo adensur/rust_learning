@@ -1,4 +1,6 @@
 use crate::structs::job_configuration::JobConfiguration;
+use crate::structs::job_configuration_query::JobConfigurationQuery;
+use crate::structs::job_reference::JobReference;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -6,4 +8,20 @@ use serde::{Deserialize, Serialize};
 pub struct Job {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration: Option<JobConfiguration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_reference: Option<JobReference>,
+}
+
+impl Job {
+    pub fn new(query: String) -> Self {
+        Job {
+            configuration: Some(JobConfiguration {
+                query: Some(JobConfigurationQuery {
+                    query: Some(query),
+                    use_legacy_sql: Some(false),
+                }),
+            }),
+            job_reference: None,
+        }
+    }
 }
