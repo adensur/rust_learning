@@ -77,7 +77,7 @@ impl fmt::Debug for Job {
 }
 
 impl Job {
-    pub async fn get_results(&self) -> Result<(), BigQueryError> {
+    pub async fn get_results(&self) -> Result<structs::query_results::QueryResults, BigQueryError> {
         if let Some(job_id) = self
             .inner_job
             .job_reference
@@ -97,9 +97,9 @@ impl Job {
                 .bearer_auth(tok.as_str())
                 .send()
                 .await?;
-            println!("{:?}", res);
-            println!("Resp body: {}", res.text().await.unwrap());
-            Ok(())
+            //println!("Resp body: {}", res.text().await.unwrap());
+            let res = res.json().await?;
+            Ok(res)
         } else {
             Err(BigQueryError::MissingJobIdInGoogleApiResponse)
         }

@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = client::Client::new().await;
     let job = client.post_query(PROJECT_ID, "SELECT * FROM `bigquery-public-data.covid19_public_forecasts.county_14d_historical_` LIMIT 4;".into()).await?;
     println!("Created job: {:?}", job);
-    job.get_results().await.unwrap();
-
+    let results = job.get_results().await.unwrap();
+    println!("got results: {:?}", results);
     Ok(())
 }
