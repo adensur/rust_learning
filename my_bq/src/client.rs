@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use crate::error::BigQueryError;
 use crate::structs;
+use crate::structs::error_proto::ErrorProto;
+use crate::structs::job_status::JobStatus;
 use crate::structs::query_results::QueryResults;
 use crate::structs::table_schema::TableSchema;
 use crate::Record;
@@ -51,15 +53,31 @@ impl Client {
             .post(api_url)
             .json(&job)
             .bearer_auth(tok.as_str())
-            //.bearer_auth("ya29.A0AVA9y1tiD-iC_4ZtxKTy2bj6SHkSsvcebvjS9R0H0cTDeKmS5aId1vw9p5eKm4u3CYCDqk901sBC4PgCs6Ba1bHU63HgpBXBsderFEQbUySmNGpZdOaYLdkYLdzIhf-wE546N2UF0O9-wWhww2nFrPxEnKuWYUNnWUtBVEFTQVRBU0ZRRTY1ZHI4dGZ3U1FKaDMyajNfSm1BX0ltcG9KUQ0163")
             .send()
             .await?;
-
-        Ok(Job {
-            inner_job: res.json().await?,
-            inner_client: self.inner_client.clone(),
-            project_id: project_id.into(),
-        })
+        let job: structs::job::Job = res.json().await?;
+        if let Some(JobStatus {
+            error_result: Some(ErrorProto { message, .. }),
+            ..
+        }) = job.status
+        {
+            return Err(BigQueryError::JobInsertError { msg: message });
+        } else {
+            if let Some(JobStatus {
+                errors: Some(errors),
+                ..
+            }) = &job.status
+            {
+                for error in errors {
+                    println!("Got error in job insert request: {}", error.message);
+                }
+            }
+            Ok(Job {
+                inner_job: job,
+                inner_client: self.inner_client.clone(),
+                project_id: project_id.into(),
+            })
+        }
     }
 }
 

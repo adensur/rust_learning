@@ -1,4 +1,7 @@
+use reqwest::Error;
 use serde::{Deserialize, Serialize};
+
+use crate::structs::error_proto::ErrorProto;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "UPPERCASE")]
@@ -14,4 +17,6 @@ pub enum State {
 pub struct JobStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<State>,
+    pub error_result: Option<ErrorProto>,
+    pub errors: Option<Vec<ErrorProto>>,
 }

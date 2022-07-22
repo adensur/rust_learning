@@ -1,4 +1,6 @@
-#[derive(thiserror::Error, Debug)]
+use thiserror::Error;
+
+#[derive(Error, Debug)]
 pub enum BigQueryError {
     #[error("Authentication error (error: {0})")]
     YupAuthError(#[from] yup_oauth2::Error),
@@ -10,4 +12,6 @@ pub enum BigQueryError {
     MissingRowsInQueryResponse,
     #[error("Struct deserialization error due to schema mismatch: {0}")]
     RowSchemaMismatch(String),
+    #[error(" while running BigQuery job: {msg}")]
+    JobInsertError { msg: String },
 }

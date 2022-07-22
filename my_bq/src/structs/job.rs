@@ -11,7 +11,6 @@ pub struct Job {
     pub configuration: Option<JobConfiguration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_reference: Option<JobReference>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<JobStatus>,
 }
 
