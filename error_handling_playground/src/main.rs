@@ -1,5 +1,6 @@
+use anyhow::{Context, Result};
 use std::{error::Error, fmt};
-
+use thiserror::Error;
 struct MyError {}
 
 impl fmt::Display for MyError {
@@ -20,8 +21,19 @@ fn my_func() -> Result<(), MyError> {
     Err(MyError {})
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[derive(Error, Debug)]
+enum MyError2 {
+    #[error("the data for key `{0}` is not available")]
+    Redaction(String),
+}
+
+fn my_func2() -> Result<(), MyError2> {
+    Err(MyError2::Redaction("My Error #2 works!".into()))
+}
+
+fn main() -> Result<()> {
     println!("Hello, world!");
+    my_func2()?;
     my_func()?;
     Ok(())
 }
