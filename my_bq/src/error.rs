@@ -6,4 +6,8 @@ pub enum BigQueryError {
     ApiRequestError(#[from] reqwest::Error),
     #[error("Malformed google api response: missing job_id")]
     MissingJobIdInGoogleApiResponse,
+    #[error("Malformed google api response: missing rows")]
+    MissingRowsInQueryResponse,
+    #[error("Struct deserialization error due to schema mismatch: {0}")]
+    RowSchemaMismatch(String),
 }

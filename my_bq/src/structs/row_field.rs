@@ -5,5 +5,5 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RowField {
     #[serde(rename = "v", skip_serializing_if = "Option::is_none")]
-    pub row_fields: Option<serde_json::Value>,
+    pub value: Option<serde_json::Value>,
 }

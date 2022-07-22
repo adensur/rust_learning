@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use crate::error::BigQueryError;
 use crate::structs;
-
+use crate::structs::query_results::QueryResults;
+use crate::structs::table_schema::TableSchema;
+use crate::Record;
+use crate::TableRow;
 use yup_oauth2::authenticator::DefaultAuthenticator;
 
 #[derive(Clone)]
@@ -76,8 +79,16 @@ impl fmt::Debug for Job {
     }
 }
 
+pub trait Deserialize
+where
+    Self: Sized,
+{
+    fn CreateDeserializeIndices(schema: TableSchema) -> Result<Vec<usize>, BigQueryError>;
+    fn Deserialize(row: TableRow, indices: &[usize]) -> Result<Self, BigQueryError>;
+}
+
 impl Job {
-    pub async fn get_results(&self) -> Result<structs::query_results::QueryResults, BigQueryError> {
+    pub async fn get_results<T: Deserialize>(&self) -> Result<Vec<T>, BigQueryError> {
         if let Some(job_id) = self
             .inner_job
             .job_reference
@@ -98,8 +109,14 @@ impl Job {
                 .send()
                 .await?;
             //println!("Resp body: {}", res.text().await.unwrap());
-            let res = res.json().await?;
-            Ok(res)
+            let query_results: QueryResults = res.json().await?;
+            let indices = T::CreateDeserializeIndices(query_results.schema)?;
+            let res: Result<Vec<T>, BigQueryError> = query_results
+                .rows
+                .into_iter()
+                .map(|row| T::Deserialize(row, &indices))
+                .collect();
+            Ok(res?)
         } else {
             Err(BigQueryError::MissingJobIdInGoogleApiResponse)
         }

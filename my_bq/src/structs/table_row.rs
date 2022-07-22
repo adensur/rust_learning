@@ -6,5 +6,5 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct TableRow {
     #[serde(rename = "f", skip_serializing_if = "Option::is_none")]
-    pub value: Option<Vec<RowField>>,
+    pub values: Option<Vec<RowField>>,
 }
