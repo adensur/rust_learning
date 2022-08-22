@@ -6,8 +6,7 @@ use crate::structs;
 use crate::structs::error_proto::ErrorProto;
 use crate::structs::job_status::JobStatus;
 use crate::structs::query_results::QueryResults;
-use crate::structs::table_schema::TableSchema;
-use crate::Record;
+use crate::structs::table_field_schema::TableFieldSchema;
 use crate::TableRow;
 use yup_oauth2::authenticator::DefaultAuthenticator;
 
@@ -97,12 +96,19 @@ impl fmt::Debug for Job {
     }
 }
 
+pub struct Decoder {
+    pub indices: Vec<usize>,
+    pub recursive_indices: Vec<Box<Decoder>>,
+}
+
 pub trait Deserialize
 where
     Self: Sized,
 {
-    fn CreateDeserializeIndices(schema: TableSchema) -> Result<Vec<usize>, BigQueryError>;
-    fn Deserialize(row: TableRow, indices: &[usize]) -> Result<Self, BigQueryError>;
+    fn create_deserialize_indices(
+        schema_fields: Vec<TableFieldSchema>,
+    ) -> Result<Decoder, BigQueryError>;
+    fn deserialize(row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError>;
 }
 
 impl Job {
@@ -126,17 +132,265 @@ impl Job {
                 .bearer_auth(tok.as_str())
                 .send()
                 .await?;
-            //println!("Resp body: {}", res.text().await.unwrap());
+            println!("Resp body: {}", res.text().await.unwrap());
+            panic!("");
             let query_results: QueryResults = res.json().await?;
-            let indices = T::CreateDeserializeIndices(query_results.schema)?;
+            println!("query results: {:?}", query_results);
+            let indices = T::create_deserialize_indices(query_results.schema.fields)?;
             let res: Result<Vec<T>, BigQueryError> = query_results
                 .rows
                 .into_iter()
-                .map(|row| T::Deserialize(row, &indices))
+                .map(|row| T::deserialize(row, &indices))
                 .collect();
             Ok(res?)
         } else {
             Err(BigQueryError::MissingJobIdInGoogleApiResponse)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::structs::row_field::Value;
+    use crate::structs::{table_field_schema, table_row::TableRow, table_schema::TableSchema};
+    use crate::BigQueryError;
+
+    use super::*;
+
+    struct Struct1 {
+        user_id: String,
+    }
+
+    impl Deserialize for Struct1 {
+        fn create_deserialize_indices(
+            schema_fields: Vec<TableFieldSchema>,
+        ) -> Result<Decoder, BigQueryError> {
+            let mut indices: Vec<usize> = vec![usize::MAX; 1];
+            for (i, field) in schema_fields.iter().enumerate() {
+                if field.name == "user_id" {
+                    if field.field_type != table_field_schema::Type::String {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected String type for field user_id, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[0] = i;
+                }
+            }
+            // check that all indices are filled
+            if indices[0] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'user_id' in schema".to_string(),
+                ));
+            }
+            Ok(Decoder {
+                indices,
+                recursive_indices: Vec::new(),
+            })
+        }
+        fn deserialize(mut row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError> {
+            let user_id_idx = decoder.indices[0];
+            if row.fields.len() <= user_id_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: user_id_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let user_id = std::mem::take(&mut row.fields[user_id_idx]);
+            let user_id = match user_id.value {
+                Value::String(val) => val,
+                other_value => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected integer value, found {:?}",
+                        other_value
+                    )))
+                }
+            };
+            Ok(Self { user_id })
+        }
+    }
+
+    #[test]
+    fn it_works() {
+        let schema = r#"{
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              }
+            ]
+          }"#;
+        let schema: TableSchema = serde_json::from_str(schema).unwrap();
+        assert_eq!(schema.fields.len(), 1);
+        let row = r#"{
+            "f": [
+              {
+                "v": "user1"
+              }
+            ]
+          }"#;
+        let row: TableRow = serde_json::from_str(row).unwrap();
+        assert_eq!(row.fields.len(), 1);
+        let decoder = Struct1::create_deserialize_indices(schema.fields).unwrap();
+        assert_eq!(decoder.indices.len(), 1);
+        assert_eq!(decoder.indices[0], 0);
+        let rec = Struct1::deserialize(row, &decoder).unwrap();
+        assert_eq!(rec.user_id, "user1");
+    }
+
+    #[test]
+    fn it_works2() {
+        let schema = r#"{
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              }
+            ]
+          }"#;
+        let schema: TableSchema = serde_json::from_str(schema).unwrap();
+        assert_eq!(schema.fields.len(), 1);
+        let row = r#"{
+            "f": [
+              {
+                "v": ""
+              }
+            ]
+          }"#;
+        let row: TableRow = serde_json::from_str(row).unwrap();
+        assert_eq!(row.fields.len(), 1);
+        let decoder = Struct1::create_deserialize_indices(schema.fields).unwrap();
+        assert_eq!(decoder.indices.len(), 1);
+        assert_eq!(decoder.indices[0], 0);
+        let rec = Struct1::deserialize(row, &decoder).unwrap();
+        assert_eq!(rec.user_id, "");
+    }
+
+    struct Struct2 {
+        user_id: String,
+        event_timestamp: i64,
+    }
+
+    impl Deserialize for Struct2 {
+        fn create_deserialize_indices(
+            schema_fields: Vec<TableFieldSchema>,
+        ) -> Result<Decoder, BigQueryError> {
+            let mut indices: Vec<usize> = vec![usize::MAX; 2];
+            for (i, field) in schema_fields.iter().enumerate() {
+                if field.name == "user_id" {
+                    if field.field_type != table_field_schema::Type::String {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected String type for field user_id, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[0] = i;
+                } else if field.name == "event_timestamp" {
+                    if field.field_type != table_field_schema::Type::Integer {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected Integer type for field event_timestamp, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[1] = i;
+                }
+            }
+            // check that all indices are filled
+            if indices[0] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'user_id' in schema".to_string(),
+                ));
+            }
+            if indices[1] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'event_timestamp' in schema".to_string(),
+                ));
+            }
+            Ok(Decoder {
+                indices,
+                recursive_indices: Vec::new(),
+            })
+        }
+        fn deserialize(mut row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError> {
+            let user_id_idx = decoder.indices[0];
+            if row.fields.len() <= user_id_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: user_id_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let user_id = std::mem::take(&mut row.fields[user_id_idx]);
+            let user_id = match user_id.value {
+                Value::String(val) => val,
+                other_value => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected integer value, found {:?}",
+                        other_value
+                    )))
+                }
+            };
+
+            let event_timestamp_idx = decoder.indices[1];
+            if row.fields.len() <= event_timestamp_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: event_timestamp_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let event_timestamp = std::mem::take(&mut row.fields[event_timestamp_idx]);
+            let event_timestamp = match event_timestamp.value {
+                Value::String(val) => val.parse()?,
+                other_value => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected integer value, found {:?}",
+                        other_value
+                    )))
+                }
+            };
+            Ok(Self {
+                user_id,
+                event_timestamp,
+            })
+        }
+    }
+    #[test]
+    fn it_works3() {
+        let schema = r#"{
+            "fields": [
+                {
+                    "name": "user_id",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                },
+                {
+                    "name": "event_timestamp",
+                    "type": "INTEGER",
+                    "mode": "NULLABLE"
+                }
+                ]
+          }"#;
+        let schema: TableSchema = serde_json::from_str(schema).unwrap();
+        assert_eq!(schema.fields.len(), 2);
+        let row = r#"{
+            "f": [
+              {
+                "v": "user1"
+              },
+              {
+                "v": "1648823841187011"
+              }
+            ]
+          }"#;
+        let row: TableRow = serde_json::from_str(row).unwrap();
+        assert_eq!(row.fields.len(), 2);
+        let decoder = Struct2::create_deserialize_indices(schema.fields).unwrap();
+        assert_eq!(decoder.indices.len(), 2);
+        assert_eq!(decoder.indices[0], 0);
+        assert_eq!(decoder.indices[1], 1);
+        let rec = Struct2::deserialize(row, &decoder).unwrap();
+        assert_eq!(rec.user_id, "user1");
+        assert_eq!(rec.event_timestamp, 1648823841187011);
     }
 }

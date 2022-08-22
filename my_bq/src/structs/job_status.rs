@@ -1,4 +1,3 @@
-use reqwest::Error;
 use serde::{Deserialize, Serialize};
 
 use crate::structs::error_proto::ErrorProto;
