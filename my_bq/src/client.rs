@@ -340,20 +340,421 @@ mod tests {
         assert_eq!(rec.uses_transient_token, "No");
     }
 
+    struct JsonValue {
+        string_value: Option<String>,
+        int_value: Option<i64>,
+        float_value: Option<f64>,
+        double_value: Option<f64>,
+    }
+
+    impl Deserialize for JsonValue {
+        fn create_deserialize_indices(
+            schema_fields: &Vec<TableFieldSchema>,
+        ) -> Result<Decoder, BigQueryError> {
+            let mut indices: Vec<usize> = vec![usize::MAX; 4];
+            for (i, field) in schema_fields.iter().enumerate() {
+                if field.name == "string_value" {
+                    if field.field_type != table_field_schema::Type::String {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected String type for field string_value, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[0] = i;
+                } else if field.name == "int_value" {
+                    if field.field_type != table_field_schema::Type::Integer {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected Integer type for field int_value, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[1] = i;
+                } else if field.name == "float_value" {
+                    if field.field_type != table_field_schema::Type::Float {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected Float type for field float_value, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[2] = i;
+                } else if field.name == "double_value" {
+                    if field.field_type != table_field_schema::Type::Float {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected Float type for field double_value, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[3] = i;
+                }
+            }
+            // check that all indices are filled
+            if indices[0] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'string_value' in schema".to_string(),
+                ));
+            }
+            if indices[1] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'int_value' in schema".to_string(),
+                ));
+            }
+            if indices[2] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'float_value' in schema".to_string(),
+                ));
+            }
+            if indices[3] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'double_value' in schema".to_string(),
+                ));
+            }
+            Ok(Decoder {
+                indices,
+                recursive_indices: Vec::new(),
+            })
+        }
+        fn deserialize(mut row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError> {
+            let string_value_idx = decoder.indices[0];
+            if row.fields.len() <= string_value_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: string_value_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let string_value = std::mem::take(&mut row.fields[string_value_idx]);
+            let string_value = match string_value.value {
+                Some(Value::String(val)) => Some(val),
+                None => None,
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field string_value, found {:?}",
+                        other_value
+                    )))
+                }
+            };
+
+            let int_value_idx = decoder.indices[1];
+            if row.fields.len() <= int_value_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: int_value_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let int_value = std::mem::take(&mut row.fields[int_value_idx]);
+            let int_value = match int_value.value {
+                Some(Value::String(val)) => Some(val.parse()?),
+                None => None,
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field int_value, found {:?}",
+                        other_value
+                    )))
+                }
+            };
+
+            let float_value_idx = decoder.indices[2];
+            if row.fields.len() <= float_value_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: float_value_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let float_value = std::mem::take(&mut row.fields[float_value_idx]);
+            let float_value = match float_value.value {
+                Some(Value::String(val)) => Some(val.parse()?),
+                None => None,
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field float_value, found {:?}",
+                        other_value
+                    )))
+                }
+            };
+
+            let double_value_idx = decoder.indices[3];
+            if row.fields.len() <= double_value_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: double_value_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let double_value = std::mem::take(&mut row.fields[double_value_idx]);
+            let double_value = match double_value.value {
+                Some(Value::String(val)) => Some(val.parse()?),
+                None => None,
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field double_value, found {:?}",
+                        other_value
+                    )))
+                }
+            };
+
+            Ok(Self {
+                string_value,
+                int_value,
+                float_value,
+                double_value,
+            })
+        }
+    }
+    #[test]
+    fn test_json_value() {
+        let schema = r#"{
+            "fields": [
+              {
+                "name": "string_value",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "int_value",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "float_value",
+                "type": "FLOAT",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "double_value",
+                "type": "FLOAT",
+                "mode": "NULLABLE"
+              }
+            ]
+          }"#;
+        let schema: TableSchema = serde_json::from_str(schema).unwrap();
+        assert_eq!(schema.fields.len(), 4);
+        let row = r#"{"f": [
+                  {
+                    "v": null
+                  },
+                  {
+                    "v": null
+                  },
+                  {
+                    "v": null
+                  },
+                  {
+                    "v": "0.0"
+                  }
+                ]
+              }"#;
+        let row: TableRow = serde_json::from_str(row).unwrap();
+        assert_eq!(row.fields.len(), 4);
+        let decoder = JsonValue::create_deserialize_indices(&schema.fields).unwrap();
+        assert_eq!(decoder.indices.len(), 4);
+        let rec = JsonValue::deserialize(row, &decoder).unwrap();
+        assert!(rec.string_value.is_none());
+        assert!(rec.int_value.is_none());
+        assert!(rec.float_value.is_none());
+        assert_eq!(rec.double_value, Some(0.0));
+    }
+
+    struct EventParam {
+        key: String,
+        value: JsonValue,
+    }
+
+    impl Deserialize for EventParam {
+        fn create_deserialize_indices(
+            schema_fields: &Vec<TableFieldSchema>,
+        ) -> Result<Decoder, BigQueryError> {
+            let mut indices: Vec<usize> = vec![usize::MAX; 2];
+            let mut recursive_indices: Vec<Box<Decoder>> = Vec::new();
+            for i in 0..1 {
+                recursive_indices.push(Box::new(Decoder::default()));
+            }
+            for (i, field) in schema_fields.iter().enumerate() {
+                if field.name == "key" {
+                    if field.field_type != table_field_schema::Type::String {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected String type for field key, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[0] = i;
+                } else if field.name == "value" {
+                    if field.field_type != table_field_schema::Type::Record {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected Record type for field value, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    match &field.fields {
+                        Some(fields) => {
+                            let decoder = JsonValue::create_deserialize_indices(&fields)?;
+                            indices[1] = i;
+                            recursive_indices[0] = Box::new(decoder);
+                        }
+                        None => {
+                            return Err(BigQueryError::RowSchemaMismatch(format!(
+                                "Failed to find recursive schema for field value",
+                            )))
+                        }
+                    }
+                }
+            }
+            // check that all indices are filled
+            if indices[0] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'key' in schema".to_string(),
+                ));
+            }
+            if indices[1] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'value' in schema".to_string(),
+                ));
+            }
+            Ok(Decoder {
+                indices,
+                recursive_indices,
+            })
+        }
+        fn deserialize(mut row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError> {
+            let key_idx = decoder.indices[0];
+            if row.fields.len() <= key_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: key_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let key = std::mem::take(&mut row.fields[key_idx]);
+            let key = match key.value {
+                Some(Value::String(val)) => val,
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field key, found {:?}",
+                        other_value
+                    )))
+                }
+                None => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected required value for field key, found null",
+                    )))
+                }
+            };
+
+            let value_idx = decoder.indices[1];
+            if row.fields.len() <= value_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: value_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let value = std::mem::take(&mut row.fields[value_idx]);
+            let value = match value.value {
+                Some(Value::Record(val)) => {
+                    JsonValue::deserialize(val, &decoder.recursive_indices[0])?
+                }
+                None => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected required value for field value, found null",
+                    )))
+                }
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field user_id_nullable, found {:?}",
+                        other_value
+                    )))
+                }
+            };
+
+            Ok(Self { key, value })
+        }
+    }
+    #[test]
+    fn test_event_param() {
+        let schema = r#"{
+            "fields": [
+          {
+            "name": "key",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "value",
+            "type": "RECORD",
+            "mode": "NULLABLE",
+            "fields": [
+              {
+                "name": "string_value",
+                "type": "STRING",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "int_value",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "float_value",
+                "type": "FLOAT",
+                "mode": "NULLABLE"
+              },
+              {
+                "name": "double_value",
+                "type": "FLOAT",
+                "mode": "NULLABLE"
+              }
+            ]
+          }
+        ]
+      }"#;
+        let schema: TableSchema = serde_json::from_str(schema).unwrap();
+        assert_eq!(schema.fields.len(), 2);
+        let row = r#"{"f": [
+            {
+              "v": "appIsInBackground"
+            },
+            {
+              "v": {
+                "f": [
+                  {
+                    "v": null
+                  },
+                  {
+                    "v": "0"
+                  },
+                  {
+                    "v": null
+                  },
+                  {
+                    "v": null
+                  }
+                ]
+              }
+            }
+          ]
+        }"#;
+        let row: TableRow = serde_json::from_str(row).unwrap();
+        assert_eq!(row.fields.len(), 2);
+        let decoder = EventParam::create_deserialize_indices(&schema.fields).unwrap();
+        assert_eq!(decoder.indices.len(), 2);
+        let rec = EventParam::deserialize(row, &decoder).unwrap();
+        assert_eq!(rec.key, "appIsInBackground");
+        assert_eq!(rec.value.string_value, None);
+        assert_eq!(rec.value.int_value, Some(0));
+        assert_eq!(rec.value.float_value, None);
+        assert_eq!(rec.value.double_value, None);
+    }
+
     struct Struct3 {
         user_id: String,
         user_id_nullable: Option<String>,
         event_timestamp: i64,
         privacy_info: PrivacyInfo,
+        event_params: Vec<EventParam>,
     }
 
     impl Deserialize for Struct3 {
         fn create_deserialize_indices(
             schema_fields: &Vec<TableFieldSchema>,
         ) -> Result<Decoder, BigQueryError> {
-            let mut indices: Vec<usize> = vec![usize::MAX; 4];
+            let mut indices: Vec<usize> = vec![usize::MAX; 5];
             let mut recursive_indices: Vec<Box<Decoder>> = Vec::new();
-            for i in 0..1 {
+            for i in 0..2 {
                 recursive_indices.push(Box::new(Decoder::default()));
             }
             for (i, field) in schema_fields.iter().enumerate() {
@@ -400,6 +801,31 @@ mod tests {
                             )))
                         }
                     }
+                } else if field.name == "event_params" {
+                    if field.field_type != table_field_schema::Type::Record {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected Record type for field event_params, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    if field.mode != table_field_schema::Mode::Repeated {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected Repeated mode for field event_params, got {:?}",
+                            field.mode
+                        )));
+                    }
+                    match &field.fields {
+                        Some(fields) => {
+                            let decoder = EventParam::create_deserialize_indices(&fields)?;
+                            indices[4] = i;
+                            recursive_indices[1] = Box::new(decoder);
+                        }
+                        None => {
+                            return Err(BigQueryError::RowSchemaMismatch(format!(
+                                "Failed to find recursive schema for field privacy_info",
+                            )))
+                        }
+                    }
                 }
             }
             // check that all indices are filled
@@ -421,6 +847,11 @@ mod tests {
             if indices[3] == usize::MAX {
                 return Err(BigQueryError::RowSchemaMismatch(
                     "Failed to find field 'privacy_info' in schema".to_string(),
+                ));
+            }
+            if indices[4] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'event_params' in schema".to_string(),
                 ));
             }
             Ok(Decoder {
@@ -519,11 +950,53 @@ mod tests {
                 }
             };
 
+            let event_params_idx = decoder.indices[4];
+            if row.fields.len() <= event_params_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: event_params_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let mut event_params: Vec<EventParam> = Vec::new();
+            let params = std::mem::take(&mut row.fields[event_params_idx]);
+            match params.value {
+                Some(Value::Array(values)) => {
+                    for val in values {
+                        match val.value {
+                            Some(Value::Record(val)) => {
+                                event_params.push(EventParam::deserialize(
+                                    val,
+                                    &decoder.recursive_indices[1],
+                                )?);
+                            }
+                            other_value => {
+                                return Err(BigQueryError::UnexpectedFieldType(format!(
+                                    "Expected record value for items within field event_params, found {:?}",
+                                    other_value
+                                )))
+                            }
+                        }
+                    }
+                }
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field event_params, found {:?}",
+                        other_value
+                    )))
+                }
+                None => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected required value for field event_params, found null",
+                    )))
+                }
+            };
+
             Ok(Self {
                 user_id,
                 event_timestamp,
                 user_id_nullable,
                 privacy_info,
+                event_params,
             })
         }
     }
@@ -567,11 +1040,50 @@ mod tests {
                     "mode": "NULLABLE"
                   }
                 ]
+              },
+              {
+                "name": "event_params",
+                "type": "RECORD",
+                "mode": "REPEATED",
+                "fields": [
+                  {
+                    "name": "key",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                  },
+                  {
+                    "name": "value",
+                    "type": "RECORD",
+                    "mode": "NULLABLE",
+                    "fields": [
+                      {
+                        "name": "string_value",
+                        "type": "STRING",
+                        "mode": "NULLABLE"
+                      },
+                      {
+                        "name": "int_value",
+                        "type": "INTEGER",
+                        "mode": "NULLABLE"
+                      },
+                      {
+                        "name": "float_value",
+                        "type": "FLOAT",
+                        "mode": "NULLABLE"
+                      },
+                      {
+                        "name": "double_value",
+                        "type": "FLOAT",
+                        "mode": "NULLABLE"
+                      }
+                    ]
+                  }
+                ]
               }
             ]
           }"#;
         let schema: TableSchema = serde_json::from_str(schema).unwrap();
-        assert_eq!(schema.fields.len(), 4);
+        assert_eq!(schema.fields.len(), 5);
         let row = r#"{
             "f": [
               {
@@ -597,13 +1109,44 @@ mod tests {
                     }
                   ]
                 }
+              },
+              {
+                "v": [
+                  {
+                    "v": {
+                      "f": [
+                        {
+                          "v": "ga_session_number"
+                        },
+                        {
+                          "v": {
+                            "f": [
+                              {
+                                "v": null
+                              },
+                              {
+                                "v": "216"
+                              },
+                              {
+                                "v": null
+                              },
+                              {
+                                "v": null
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
               }
             ]
           }"#;
         let row: TableRow = serde_json::from_str(row).unwrap();
-        assert_eq!(row.fields.len(), 4);
+        assert_eq!(row.fields.len(), 5);
         let decoder = Struct3::create_deserialize_indices(&schema.fields).unwrap();
-        assert_eq!(decoder.indices.len(), 4);
+        assert_eq!(decoder.indices.len(), 5);
         let rec = Struct3::deserialize(row, &decoder).unwrap();
         assert_eq!(rec.user_id, "user1");
         assert_eq!(rec.event_timestamp, 1648823841187011);
@@ -611,5 +1154,6 @@ mod tests {
         assert_eq!(rec.privacy_info.analytics_storage, "Yes");
         assert_eq!(rec.privacy_info.ads_storage, "Yes");
         assert_eq!(rec.privacy_info.uses_transient_token, "No");
+        assert_eq!(rec.event_params.len(), 1);
     }
 }

@@ -8,7 +8,7 @@ pub enum Value {
     #[default]
     Unknown,
     String(String),
-    Array(Vec<Value>),
+    Array(Vec<RowField>),
     Record(TableRow),
 }
 

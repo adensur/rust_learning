@@ -1,4 +1,4 @@
-use std::num::ParseIntError;
+use std::num::{ParseFloatError, ParseIntError};
 
 use thiserror::Error;
 
@@ -8,6 +8,8 @@ pub enum BigQueryError {
     YupAuthError(#[from] yup_oauth2::Error),
     #[error("Int conversion error (error: {0})")]
     IntConversionError(#[from] ParseIntError),
+    #[error("Float conversion error (error: {0})")]
+    FloatConversionError(#[from] ParseFloatError),
     #[error("Request to google api error (error: {0})")]
     ApiRequestError(#[from] reqwest::Error),
     #[error("Malformed google api response: missing job_id")]

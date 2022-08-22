@@ -405,6 +405,7 @@ async fn main() -> Result<()> {
         user_id as user_id_nullable,
         event_timestamp,
         privacy_info,
+        event_params
         from `topliner-c3bc2.analytics_161560246.events_*`
         where event_name in 
             ('voisey_entered', 'voisey_exited', 'liked_voisey', 'unliked_voisey', 'shared_voisey_to_third_party', 'posted_comment_on_voisey',
