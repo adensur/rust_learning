@@ -96,6 +96,7 @@ impl fmt::Debug for Job {
     }
 }
 
+#[derive(Default)]
 pub struct Decoder {
     pub indices: Vec<usize>,
     pub recursive_indices: Vec<Box<Decoder>>,
@@ -106,7 +107,7 @@ where
     Self: Sized,
 {
     fn create_deserialize_indices(
-        schema_fields: Vec<TableFieldSchema>,
+        schema_fields: &Vec<TableFieldSchema>,
     ) -> Result<Decoder, BigQueryError>;
     fn deserialize(row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError>;
 }
@@ -136,7 +137,7 @@ impl Job {
             panic!("");
             let query_results: QueryResults = res.json().await?;
             println!("query results: {:?}", query_results);
-            let indices = T::create_deserialize_indices(query_results.schema.fields)?;
+            let indices = T::create_deserialize_indices(&query_results.schema.fields)?;
             let res: Result<Vec<T>, BigQueryError> = query_results
                 .rows
                 .into_iter()
@@ -157,17 +158,204 @@ mod tests {
 
     use super::*;
 
+    struct PrivacyInfo {
+        analytics_storage: String,
+        ads_storage: String,
+        uses_transient_token: String,
+    }
+
+    impl Deserialize for PrivacyInfo {
+        fn create_deserialize_indices(
+            schema_fields: &Vec<TableFieldSchema>,
+        ) -> Result<Decoder, BigQueryError> {
+            let mut indices: Vec<usize> = vec![usize::MAX; 3];
+            for (i, field) in schema_fields.iter().enumerate() {
+                if field.name == "analytics_storage" {
+                    if field.field_type != table_field_schema::Type::String {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected String type for field analytics_storage, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[0] = i;
+                } else if field.name == "ads_storage" {
+                    if field.field_type != table_field_schema::Type::String {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected String type for field ads_storage, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[1] = i;
+                }
+                if field.name == "uses_transient_token" {
+                    if field.field_type != table_field_schema::Type::String {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected String type for field uses_transient_token, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    indices[2] = i;
+                }
+            }
+            // check that all indices are filled
+            if indices[0] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'analytics_storage' in schema".to_string(),
+                ));
+            }
+            if indices[1] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'ads_storage' in schema".to_string(),
+                ));
+            }
+            if indices[2] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'uses_transient_token' in schema".to_string(),
+                ));
+            }
+            Ok(Decoder {
+                indices,
+                recursive_indices: Vec::new(),
+            })
+        }
+        fn deserialize(mut row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError> {
+            let analytics_storage_idx = decoder.indices[0];
+            if row.fields.len() <= analytics_storage_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: analytics_storage_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let analytics_storage = std::mem::take(&mut row.fields[analytics_storage_idx]);
+            let analytics_storage = match analytics_storage.value {
+                Some(Value::String(val)) => val,
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field analytics_storage, found {:?}",
+                        other_value
+                    )))
+                }
+                None => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected required value for field analytics_storage, found null",
+                    )))
+                }
+            };
+
+            let ads_storage_idx = decoder.indices[1];
+            if row.fields.len() <= ads_storage_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: ads_storage_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let ads_storage = std::mem::take(&mut row.fields[ads_storage_idx]);
+            let ads_storage = match ads_storage.value {
+                Some(Value::String(val)) => val,
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field ads_storage, found {:?}",
+                        other_value
+                    )))
+                }
+                None => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected required value for field ads_storage, found null",
+                    )))
+                }
+            };
+
+            let uses_transient_token_idx = decoder.indices[2];
+            if row.fields.len() <= uses_transient_token_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: uses_transient_token_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let uses_transient_token = std::mem::take(&mut row.fields[uses_transient_token_idx]);
+            let uses_transient_token = match uses_transient_token.value {
+                Some(Value::String(val)) => val,
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field uses_transient_token, found {:?}",
+                        other_value
+                    )))
+                }
+                None => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected required value for field uses_transient_token, found null",
+                    )))
+                }
+            };
+
+            Ok(Self {
+                analytics_storage,
+                ads_storage,
+                uses_transient_token,
+            })
+        }
+    }
+    #[test]
+    fn it_works() {
+        let schema = r#"{
+            "fields": [
+                {
+                "name": "analytics_storage",
+                "type": "STRING",
+                "mode": "NULLABLE"
+                },
+                {
+                "name": "ads_storage",
+                "type": "STRING",
+                "mode": "NULLABLE"
+                },
+                {
+                "name": "uses_transient_token",
+                "type": "STRING",
+                "mode": "NULLABLE"
+                }
+            ]
+          }"#;
+        let schema: TableSchema = serde_json::from_str(schema).unwrap();
+        assert_eq!(schema.fields.len(), 3);
+        let row = r#"{"f": [
+            {
+              "v": "Yes"
+            },
+            {
+              "v": "Yes"
+            },
+            {
+              "v": "No"
+            }
+          ]
+        }"#;
+        let row: TableRow = serde_json::from_str(row).unwrap();
+        assert_eq!(row.fields.len(), 3);
+        let decoder = PrivacyInfo::create_deserialize_indices(&schema.fields).unwrap();
+        assert_eq!(decoder.indices.len(), 3);
+        let rec = PrivacyInfo::deserialize(row, &decoder).unwrap();
+        assert_eq!(rec.analytics_storage, "Yes");
+        assert_eq!(rec.ads_storage, "Yes");
+        assert_eq!(rec.uses_transient_token, "No");
+    }
+
     struct Struct3 {
         user_id: String,
         user_id_nullable: Option<String>,
         event_timestamp: i64,
+        privacy_info: PrivacyInfo,
     }
 
     impl Deserialize for Struct3 {
         fn create_deserialize_indices(
-            schema_fields: Vec<TableFieldSchema>,
+            schema_fields: &Vec<TableFieldSchema>,
         ) -> Result<Decoder, BigQueryError> {
-            let mut indices: Vec<usize> = vec![usize::MAX; 3];
+            let mut indices: Vec<usize> = vec![usize::MAX; 4];
+            let mut recursive_indices: Vec<Box<Decoder>> = Vec::new();
+            for i in 0..1 {
+                recursive_indices.push(Box::new(Decoder::default()));
+            }
             for (i, field) in schema_fields.iter().enumerate() {
                 if field.name == "user_id" {
                     if field.field_type != table_field_schema::Type::String {
@@ -193,6 +381,25 @@ mod tests {
                         )));
                     }
                     indices[2] = i;
+                } else if field.name == "privacy_info" {
+                    if field.field_type != table_field_schema::Type::Record {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected Record type for field privacy_info, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    match &field.fields {
+                        Some(fields) => {
+                            let decoder = PrivacyInfo::create_deserialize_indices(&fields)?;
+                            indices[3] = i;
+                            recursive_indices[0] = Box::new(decoder);
+                        }
+                        None => {
+                            return Err(BigQueryError::RowSchemaMismatch(format!(
+                                "Failed to find recursive schema for field privacy_info",
+                            )))
+                        }
+                    }
                 }
             }
             // check that all indices are filled
@@ -211,9 +418,14 @@ mod tests {
                     "Failed to find field 'user_id_nullable' in schema".to_string(),
                 ));
             }
+            if indices[3] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'privacy_info' in schema".to_string(),
+                ));
+            }
             Ok(Decoder {
                 indices,
-                recursive_indices: Vec::new(),
+                recursive_indices,
             })
         }
         fn deserialize(mut row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError> {
@@ -282,10 +494,36 @@ mod tests {
                 }
             };
 
+            let privacy_info_idx = decoder.indices[3];
+            if row.fields.len() <= privacy_info_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: privacy_info_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let privacy_info = std::mem::take(&mut row.fields[privacy_info_idx]);
+            let privacy_info = match privacy_info.value {
+                Some(Value::Record(val)) => {
+                    PrivacyInfo::deserialize(val, &decoder.recursive_indices[0])?
+                }
+                None => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected required value for field privacy_info, found null",
+                    )))
+                }
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field user_id_nullable, found {:?}",
+                        other_value
+                    )))
+                }
+            };
+
             Ok(Self {
                 user_id,
                 event_timestamp,
                 user_id_nullable,
+                privacy_info,
             })
         }
     }
@@ -307,11 +545,33 @@ mod tests {
                 "name": "event_timestamp",
                 "type": "INTEGER",
                 "mode": "NULLABLE"
+              },
+              {
+                "name": "privacy_info",
+                "type": "RECORD",
+                "mode": "NULLABLE",
+                "fields": [
+                  {
+                    "name": "analytics_storage",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                  },
+                  {
+                    "name": "ads_storage",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                  },
+                  {
+                    "name": "uses_transient_token",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                  }
+                ]
               }
             ]
           }"#;
         let schema: TableSchema = serde_json::from_str(schema).unwrap();
-        assert_eq!(schema.fields.len(), 3);
+        assert_eq!(schema.fields.len(), 4);
         let row = r#"{
             "f": [
               {
@@ -322,16 +582,34 @@ mod tests {
               },
               {
                 "v": "1648823841187011"
+              },
+              {
+                "v": {
+                  "f": [
+                    {
+                      "v": "Yes"
+                    },
+                    {
+                      "v": "Yes"
+                    },
+                    {
+                      "v": "No"
+                    }
+                  ]
+                }
               }
             ]
           }"#;
         let row: TableRow = serde_json::from_str(row).unwrap();
-        assert_eq!(row.fields.len(), 3);
-        let decoder = Struct3::create_deserialize_indices(schema.fields).unwrap();
-        assert_eq!(decoder.indices.len(), 3);
+        assert_eq!(row.fields.len(), 4);
+        let decoder = Struct3::create_deserialize_indices(&schema.fields).unwrap();
+        assert_eq!(decoder.indices.len(), 4);
         let rec = Struct3::deserialize(row, &decoder).unwrap();
         assert_eq!(rec.user_id, "user1");
         assert_eq!(rec.event_timestamp, 1648823841187011);
         assert!(rec.user_id_nullable.is_none());
+        assert_eq!(rec.privacy_info.analytics_storage, "Yes");
+        assert_eq!(rec.privacy_info.ads_storage, "Yes");
+        assert_eq!(rec.privacy_info.uses_transient_token, "No");
     }
 }
