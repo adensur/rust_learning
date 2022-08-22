@@ -17,5 +17,5 @@ pub enum Value {
 #[serde(rename_all = "camelCase")]
 pub struct RowField {
     #[serde(rename = "v")]
-    pub value: Value,
+    pub value: Option<Value>,
 }

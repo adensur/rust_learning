@@ -263,15 +263,17 @@ impl Deserialize for Record {
 }
 */
 #[derive(Debug)]
-struct Struct1 {
+struct Struct3 {
     user_id: String,
+    user_id_nullable: Option<String>,
+    event_timestamp: i64,
 }
 
-impl Deserialize for Struct1 {
+impl Deserialize for Struct3 {
     fn create_deserialize_indices(
         schema_fields: Vec<TableFieldSchema>,
     ) -> Result<Decoder, BigQueryError> {
-        let mut indices: Vec<usize> = vec![usize::MAX; 1];
+        let mut indices: Vec<usize> = vec![usize::MAX; 3];
         for (i, field) in schema_fields.iter().enumerate() {
             if field.name == "user_id" {
                 if field.field_type != table_field_schema::Type::String {
@@ -281,12 +283,38 @@ impl Deserialize for Struct1 {
                     )));
                 }
                 indices[0] = i;
+            } else if field.name == "event_timestamp" {
+                if field.field_type != table_field_schema::Type::Integer {
+                    return Err(BigQueryError::RowSchemaMismatch(format!(
+                        "Expected Integer type for field event_timestamp, got {:?}",
+                        field.field_type
+                    )));
+                }
+                indices[1] = i;
+            } else if field.name == "user_id_nullable" {
+                if field.field_type != table_field_schema::Type::Integer {
+                    return Err(BigQueryError::RowSchemaMismatch(format!(
+                        "Expected Integer type for field event_timestamp, got {:?}",
+                        field.field_type
+                    )));
+                }
+                indices[2] = i;
             }
         }
         // check that all indices are filled
         if indices[0] == usize::MAX {
             return Err(BigQueryError::RowSchemaMismatch(
                 "Failed to find field 'user_id' in schema".to_string(),
+            ));
+        }
+        if indices[1] == usize::MAX {
+            return Err(BigQueryError::RowSchemaMismatch(
+                "Failed to find field 'event_timestamp' in schema".to_string(),
+            ));
+        }
+        if indices[2] == usize::MAX {
+            return Err(BigQueryError::RowSchemaMismatch(
+                "Failed to find field 'user_id_nullable' in schema".to_string(),
             ));
         }
         Ok(Decoder {
@@ -304,15 +332,67 @@ impl Deserialize for Struct1 {
         }
         let user_id = std::mem::take(&mut row.fields[user_id_idx]);
         let user_id = match user_id.value {
-            Value::String(val) => val,
-            other_value => {
+            Some(Value::String(val)) => val,
+            Some(other_value) => {
+                return Err(BigQueryError::UnexpectedFieldType(format!(
+                    "Expected string value, found {:?}",
+                    other_value
+                )))
+            }
+            None => {
+                return Err(BigQueryError::UnexpectedFieldType(format!(
+                    "Expected required value, found null",
+                )))
+            }
+        };
+
+        let event_timestamp_idx = decoder.indices[0];
+        if row.fields.len() <= event_timestamp_idx {
+            return Err(BigQueryError::NotEnoughFields {
+                expected: event_timestamp_idx + 1,
+                found: row.fields.len(),
+            });
+        }
+        let event_timestamp = std::mem::take(&mut row.fields[event_timestamp_idx]);
+        let event_timestamp = match event_timestamp.value {
+            Some(Value::String(val)) => val.parse()?,
+            Some(other_value) => {
                 return Err(BigQueryError::UnexpectedFieldType(format!(
                     "Expected integer value, found {:?}",
                     other_value
                 )))
             }
+            None => {
+                return Err(BigQueryError::UnexpectedFieldType(format!(
+                    "Expected required value, found null",
+                )))
+            }
         };
-        Ok(Self { user_id })
+
+        let user_id_nullable_idx = decoder.indices[0];
+        if row.fields.len() <= user_id_nullable_idx {
+            return Err(BigQueryError::NotEnoughFields {
+                expected: user_id_nullable_idx + 1,
+                found: row.fields.len(),
+            });
+        }
+        let user_id_nullable = std::mem::take(&mut row.fields[user_id_nullable_idx]);
+        let user_id_nullable = match user_id_nullable.value {
+            Some(Value::String(val)) => Some(val),
+            None => None,
+            Some(other_value) => {
+                return Err(BigQueryError::UnexpectedFieldType(format!(
+                    "Expected string value, found {:?}",
+                    other_value
+                )))
+            }
+        };
+
+        Ok(Self {
+            user_id,
+            event_timestamp,
+            user_id_nullable,
+        })
     }
 }
 
@@ -322,6 +402,7 @@ async fn main() -> Result<()> {
     let client = client::Client::new().await;
     let job = client.post_query(PROJECT_ID, r#"select 
         coalesce(user_id, "") as user_id,
+        user_id as user_id_nullable,
         event_timestamp
         from `topliner-c3bc2.analytics_161560246.events_*`
         where event_name in 
@@ -330,7 +411,7 @@ async fn main() -> Result<()> {
             and app_info.version >= "1.61" 
             and _TABLE_SUFFIX between "20220401" and "20220402" limit 1;"#.into()).await?;
     println!("Created job: {:?}", job);
-    let results = job.get_results::<Struct1>().await.unwrap();
+    let results = job.get_results::<Struct3>().await.unwrap();
     for row in results {
         println!("Got record: {:?}", row);
     }
