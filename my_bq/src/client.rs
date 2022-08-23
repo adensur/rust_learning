@@ -746,15 +746,16 @@ mod tests {
         event_timestamp: i64,
         privacy_info: PrivacyInfo,
         event_params: Vec<EventParam>,
+        user_properties: Vec<EventParam>,
     }
 
     impl Deserialize for Struct3 {
         fn create_deserialize_indices(
             schema_fields: &Vec<TableFieldSchema>,
         ) -> Result<Decoder, BigQueryError> {
-            let mut indices: Vec<usize> = vec![usize::MAX; 5];
+            let mut indices: Vec<usize> = vec![usize::MAX; 6];
             let mut recursive_indices: Vec<Box<Decoder>> = Vec::new();
-            for i in 0..2 {
+            for i in 0..3 {
                 recursive_indices.push(Box::new(Decoder::default()));
             }
             for (i, field) in schema_fields.iter().enumerate() {
@@ -822,7 +823,32 @@ mod tests {
                         }
                         None => {
                             return Err(BigQueryError::RowSchemaMismatch(format!(
-                                "Failed to find recursive schema for field privacy_info",
+                                "Failed to find recursive schema for field event_params",
+                            )))
+                        }
+                    }
+                } else if field.name == "user_properties" {
+                    if field.field_type != table_field_schema::Type::Record {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected Record type for field user_properties, got {:?}",
+                            field.field_type
+                        )));
+                    }
+                    if field.mode != table_field_schema::Mode::Repeated {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            "Expected Repeated mode for field user_properties, got {:?}",
+                            field.mode
+                        )));
+                    }
+                    match &field.fields {
+                        Some(fields) => {
+                            let decoder = EventParam::create_deserialize_indices(&fields)?;
+                            indices[5] = i;
+                            recursive_indices[2] = Box::new(decoder);
+                        }
+                        None => {
+                            return Err(BigQueryError::RowSchemaMismatch(format!(
+                                "Failed to find recursive schema for field user_properties",
                             )))
                         }
                     }
@@ -852,6 +878,11 @@ mod tests {
             if indices[4] == usize::MAX {
                 return Err(BigQueryError::RowSchemaMismatch(
                     "Failed to find field 'event_params' in schema".to_string(),
+                ));
+            }
+            if indices[5] == usize::MAX {
+                return Err(BigQueryError::RowSchemaMismatch(
+                    "Failed to find field 'user_properties' in schema".to_string(),
                 ));
             }
             Ok(Decoder {
@@ -991,12 +1022,54 @@ mod tests {
                 }
             };
 
+            let user_properties_idx = decoder.indices[5];
+            if row.fields.len() <= user_properties_idx {
+                return Err(BigQueryError::NotEnoughFields {
+                    expected: user_properties_idx + 1,
+                    found: row.fields.len(),
+                });
+            }
+            let mut user_properties: Vec<EventParam> = Vec::new();
+            let params = std::mem::take(&mut row.fields[user_properties_idx]);
+            match params.value {
+                Some(Value::Array(values)) => {
+                    for val in values {
+                        match val.value {
+                            Some(Value::Record(val)) => {
+                                user_properties.push(EventParam::deserialize(
+                                    val,
+                                    &decoder.recursive_indices[1],
+                                )?);
+                            }
+                            other_value => {
+                                return Err(BigQueryError::UnexpectedFieldType(format!(
+                                    "Expected record value for items within field user_properties, found {:?}",
+                                    other_value
+                                )))
+                            }
+                        }
+                    }
+                }
+                Some(other_value) => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected string value for field user_properties, found {:?}",
+                        other_value
+                    )))
+                }
+                None => {
+                    return Err(BigQueryError::UnexpectedFieldType(format!(
+                        "Expected required value for field user_properties, found null",
+                    )))
+                }
+            };
+
             Ok(Self {
                 user_id,
                 event_timestamp,
                 user_id_nullable,
                 privacy_info,
                 event_params,
+                user_properties,
             })
         }
     }
@@ -1079,11 +1152,55 @@ mod tests {
                     ]
                   }
                 ]
+              },
+              {
+                "name": "user_properties",
+                "type": "RECORD",
+                "mode": "REPEATED",
+                "fields": [
+                  {
+                    "name": "key",
+                    "type": "STRING",
+                    "mode": "NULLABLE"
+                  },
+                  {
+                    "name": "value",
+                    "type": "RECORD",
+                    "mode": "NULLABLE",
+                    "fields": [
+                      {
+                        "name": "string_value",
+                        "type": "STRING",
+                        "mode": "NULLABLE"
+                      },
+                      {
+                        "name": "int_value",
+                        "type": "INTEGER",
+                        "mode": "NULLABLE"
+                      },
+                      {
+                        "name": "float_value",
+                        "type": "FLOAT",
+                        "mode": "NULLABLE"
+                      },
+                      {
+                        "name": "double_value",
+                        "type": "FLOAT",
+                        "mode": "NULLABLE"
+                      },
+                      {
+                        "name": "set_timestamp_micros",
+                        "type": "INTEGER",
+                        "mode": "NULLABLE"
+                      }
+                    ]
+                  }
+                ]
               }
             ]
           }"#;
         let schema: TableSchema = serde_json::from_str(schema).unwrap();
-        assert_eq!(schema.fields.len(), 5);
+        assert_eq!(schema.fields.len(), 6);
         let row = r#"{
             "f": [
               {
@@ -1140,13 +1257,47 @@ mod tests {
                     }
                   }
                 ]
+              },
+              {
+                "v": [
+                  {
+                    "v": {
+                      "f": [
+                        {
+                          "v": "ga_session_id"
+                        },
+                        {
+                          "v": {
+                            "f": [
+                              {
+                                "v": null
+                              },
+                              {
+                                "v": "1648823837"
+                              },
+                              {
+                                "v": null
+                              },
+                              {
+                                "v": null
+                              },
+                              {
+                                "v": "1648823837891000"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
               }
             ]
           }"#;
         let row: TableRow = serde_json::from_str(row).unwrap();
-        assert_eq!(row.fields.len(), 5);
+        assert_eq!(row.fields.len(), 6);
         let decoder = Struct3::create_deserialize_indices(&schema.fields).unwrap();
-        assert_eq!(decoder.indices.len(), 5);
+        assert_eq!(decoder.indices.len(), 6);
         let rec = Struct3::deserialize(row, &decoder).unwrap();
         assert_eq!(rec.user_id, "user1");
         assert_eq!(rec.event_timestamp, 1648823841187011);
@@ -1155,5 +1306,8 @@ mod tests {
         assert_eq!(rec.privacy_info.ads_storage, "Yes");
         assert_eq!(rec.privacy_info.uses_transient_token, "No");
         assert_eq!(rec.event_params.len(), 1);
+        assert_eq!(rec.event_params[0].value.int_value, Some(216));
+        assert_eq!(rec.user_properties.len(), 1);
+        assert_eq!(rec.user_properties[0].value.int_value, Some(1648823837));
     }
 }
