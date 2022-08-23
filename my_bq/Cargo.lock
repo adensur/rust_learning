@@ -467,12 +467,21 @@ name = "my_bq"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "my_bq_proc",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
  "yup-oauth2",
+]
+
+[[package]]
+name = "my_bq_proc"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn",
 ]
 
 [[package]]

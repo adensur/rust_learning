@@ -13,3 +13,4 @@ thiserror = "1.0.31"
 serde = "1.0.139"
 serde_json = "1.0.82"
 anyhow = "1.0.58"
+my_bq_proc = { path = "my_bq_proc" }

@@ -158,6 +158,40 @@ mod tests {
 
     use super::*;
 
+    use my_bq_proc::Deserialize;
+
+    #[derive(Deserialize)]
+    struct MyStruct2 {
+        ads_storage: String,
+    }
+
+    #[test]
+    fn test_simplest_struct() {
+        let schema = r#"{
+            "fields": [
+                {
+                "name": "ads_storage",
+                "type": "STRING",
+                "mode": "NULLABLE"
+                }
+            ]
+          }"#;
+        let schema: TableSchema = serde_json::from_str(schema).unwrap();
+        assert_eq!(schema.fields.len(), 1);
+        let row = r#"{"f": [
+            {
+              "v": "Yes"
+            }
+          ]
+        }"#;
+        let row: TableRow = serde_json::from_str(row).unwrap();
+        assert_eq!(row.fields.len(), 1);
+        let decoder = MyStruct2::create_deserialize_indices(&schema.fields).unwrap();
+        assert_eq!(decoder.indices.len(), 1);
+        let rec = MyStruct2::deserialize(row, &decoder).unwrap();
+        assert_eq!(rec.ads_storage, "Yes");
+    }
+
     struct PrivacyInfo {
         analytics_storage: String,
         ads_storage: String,
