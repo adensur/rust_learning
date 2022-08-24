@@ -367,11 +367,13 @@ mod tests {
         assert_eq!(rec.double_value, Some(0.0));
     }
 
+    #[derive(Deserialize)]
     struct EventParam {
         key: String,
         value: JsonValue,
     }
 
+    /*
     impl Deserialize for EventParam {
         fn create_deserialize_indices(
             schema_fields: &Vec<TableFieldSchema>,
@@ -478,7 +480,7 @@ mod tests {
 
             Ok(Self { key, value })
         }
-    }
+    }*/
     #[test]
     fn test_event_param() {
         let schema = r#"{

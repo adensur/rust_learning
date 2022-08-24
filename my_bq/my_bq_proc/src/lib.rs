@@ -59,11 +59,12 @@ r#"impl Deserialize for MyStruct {
     }
 */
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum SqlType {
     String,
     Integer,
     Float,
+    Record,
     Option(Box<SqlType>),
 }
 
@@ -103,7 +104,8 @@ impl SqlType {
                             panic!("Only simple qualified types are supported, got: {:#?}", p);
                         }
                     } else {
-                        panic!("Unexpected type: {}", id)
+                        // Some user custom type
+                        SqlType::Record
                     }
                 } else {
                     panic!("Only simple qualified types are supported, got: {:#?}", p)
@@ -206,6 +208,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
     } else {
         panic!("Only structs with named fields are supported")
     };
+    let mut recursive_idx = -1;
     let fields_code1 = fields.iter().enumerate().map(|(i, f)| {
         let field_name = f.name.clone();
         let error = format!(
@@ -216,21 +219,48 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             SqlType::String => quote! {table_field_schema::Type::String},
             SqlType::Integer => quote! {table_field_schema::Type::Integer},
             SqlType::Float => quote! {table_field_schema::Type::Float},
+            SqlType::Record => quote! {table_field_schema::Type::Record},
             SqlType::Option(subtype) => match *subtype {
                 SqlType::String => quote! {table_field_schema::Type::String},
                 SqlType::Integer => quote! {table_field_schema::Type::Integer},
                 SqlType::Float => quote! {table_field_schema::Type::Float},
+                SqlType::Record => quote! {table_field_schema::Type::Record},
                 _ => panic!("Unexpected subtype: {:?}", subtype),
             },
         };
-        quote! {
-            if field.name == #field_name {
-                if field.field_type != #expected_sql_type {
-                    return Err(BigQueryError::RowSchemaMismatch(format!(
-                        #error, field.field_type
-                    )));
+        if f.sql_type == SqlType::Record {
+            recursive_idx += 1;
+            let recursive_error =
+                format!("Failed to find recursive schema for field {}", field_name);
+            quote! {
+                if field.name == #field_name {
+                    if field.field_type != #expected_sql_type {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            #error, field.field_type
+                        )));
+                    }
+                    match &field.fields {
+                        Some(fields) => {
+                            let decoder = JsonValue::create_deserialize_indices(&fields)?;
+                            indices[#i] = i;
+                            recursive_indices[#recursive_idx as usize] = Box::new(decoder);
+                        }
+                        None => {
+                            return Err(BigQueryError::RowSchemaMismatch(#recursive_error.to_string()));
+                        }
+                    }
                 }
-                indices[#i] = i;
+            }
+        } else {
+            quote! {
+                if field.name == #field_name {
+                    if field.field_type != #expected_sql_type {
+                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                            #error, field.field_type
+                        )));
+                    }
+                    indices[#i] = i;
+                }
             }
         }
     });
@@ -247,6 +277,10 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
     let fields_len = fields.len();
     let indices_code = quote! {
         let mut indices: Vec<usize> = vec![usize::MAX; #fields_len];
+        let mut recursive_indices: Vec<Box<Decoder>> = Vec::new();
+        for i in 0..#fields_len {
+            recursive_indices.push(Box::new(Decoder::default()));
+        }
         for (i, field) in schema_fields.iter().enumerate() {
             #(#fields_code1)*
         }
@@ -254,10 +288,11 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
         #(#fields_code2)*
         Ok(Decoder {
             indices,
-            recursive_indices: Vec::new(),
+            recursive_indices,
         })
     };
 
+    let mut recursive_idx = -1;
     let fields_code3 = fields.iter().enumerate().map(|(i, f)| {
         let field_ident = f.ident.clone();
         let field_name = f.name.clone();
@@ -294,6 +329,59 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                             return Err(BigQueryError::UnexpectedFieldType(
                                 #error2.into()
                             ))
+                        }
+                    };
+                }
+            }
+            SqlType::Record => {
+                recursive_idx += 1;
+                /*
+                let value = std::mem::take(&mut row.fields[value_idx]);
+                let value = match value.value {
+                    Some(Value::Record(val)) => {
+                        JsonValue::deserialize(val, &decoder.recursive_indices[0])?
+                    }
+                    None => {
+                        return Err(BigQueryError::UnexpectedFieldType(format!(
+                            "Expected required value for field value, found null",
+                        )))
+                    }
+                    Some(other_value) => {
+                        return Err(BigQueryError::UnexpectedFieldType(format!(
+                            "Expected string value for field user_id_nullable, found {:?}",
+                            other_value
+                        )))
+                    }
+                };
+                 */
+                let null_error =
+                    format!("Expected required value for field {}, found null", f.name);
+                let type_error =
+                    format!("Expected Record value for field {}, found {{:?}}", f.name);
+                let recursive_type = &f.ty;
+                quote! {
+                    let idx = decoder.indices[#i];
+                    if row.fields.len() <= idx {
+                        return Err(BigQueryError::NotEnoughFields {
+                            expected: idx + 1,
+                            found: row.fields.len(),
+                        });
+                    }
+                    let #field_ident = std::mem::take(&mut row.fields[idx]);
+                    let #field_ident = match #field_ident.value {
+                        Some(Value::Record(val)) => {
+                            #recursive_type::deserialize(val, &decoder.recursive_indices[#recursive_idx as usize])?
+                        }
+                        None => {
+                            return Err(BigQueryError::UnexpectedFieldType(format!(
+                                #null_error,
+                            )))
+                        }
+                        Some(other_value) => {
+                            return Err(BigQueryError::UnexpectedFieldType(format!(
+                                #type_error,
+                                other_value
+                            )))
                         }
                     };
                 }
