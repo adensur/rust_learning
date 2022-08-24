@@ -162,8 +162,10 @@ mod tests {
 
     #[derive(Deserialize)]
     struct MyStruct2 {
-        #[my_bq(rename = "ads_storage2")]
-        ads_storage: String,
+        #[my_bq(rename = "analytics_storage")]
+        analytics: String,
+        #[my_bq(rename = "ads_storage")]
+        ads: String,
     }
 
     #[test]
@@ -171,164 +173,42 @@ mod tests {
         let schema = r#"{
             "fields": [
                 {
-                "name": "ads_storage2",
+                "name": "analytics_storage",
+                "type": "STRING",
+                "mode": "NULLABLE"
+                },
+                {
+                "name": "ads_storage",
                 "type": "STRING",
                 "mode": "NULLABLE"
                 }
             ]
           }"#;
         let schema: TableSchema = serde_json::from_str(schema).unwrap();
-        assert_eq!(schema.fields.len(), 1);
+        assert_eq!(schema.fields.len(), 2);
         let row = r#"{"f": [
             {
               "v": "Yes"
+            },
+            {
+              "v": "Yes2"
             }
           ]
         }"#;
         let row: TableRow = serde_json::from_str(row).unwrap();
-        assert_eq!(row.fields.len(), 1);
+        assert_eq!(row.fields.len(), 2);
         let decoder = MyStruct2::create_deserialize_indices(&schema.fields).unwrap();
-        assert_eq!(decoder.indices.len(), 1);
+        assert_eq!(decoder.indices.len(), 2);
         let rec = MyStruct2::deserialize(row, &decoder).unwrap();
-        assert_eq!(rec.ads_storage, "Yes");
+        assert_eq!(rec.analytics, "Yes");
+        assert_eq!(rec.ads, "Yes2");
     }
 
+    #[derive(Deserialize)]
     struct PrivacyInfo {
         analytics_storage: String,
         ads_storage: String,
         uses_transient_token: String,
-    }
-
-    impl Deserialize for PrivacyInfo {
-        fn create_deserialize_indices(
-            schema_fields: &Vec<TableFieldSchema>,
-        ) -> Result<Decoder, BigQueryError> {
-            let mut indices: Vec<usize> = vec![usize::MAX; 3];
-            for (i, field) in schema_fields.iter().enumerate() {
-                if field.name == "analytics_storage" {
-                    if field.field_type != table_field_schema::Type::String {
-                        return Err(BigQueryError::RowSchemaMismatch(format!(
-                            "Expected String type for field analytics_storage, got {:?}",
-                            field.field_type
-                        )));
-                    }
-                    indices[0] = i;
-                } else if field.name == "ads_storage" {
-                    if field.field_type != table_field_schema::Type::String {
-                        return Err(BigQueryError::RowSchemaMismatch(format!(
-                            "Expected String type for field ads_storage, got {:?}",
-                            field.field_type
-                        )));
-                    }
-                    indices[1] = i;
-                }
-                if field.name == "uses_transient_token" {
-                    if field.field_type != table_field_schema::Type::String {
-                        return Err(BigQueryError::RowSchemaMismatch(format!(
-                            "Expected String type for field uses_transient_token, got {:?}",
-                            field.field_type
-                        )));
-                    }
-                    indices[2] = i;
-                }
-            }
-            // check that all indices are filled
-            if indices[0] == usize::MAX {
-                return Err(BigQueryError::RowSchemaMismatch(
-                    "Failed to find field 'analytics_storage' in schema".to_string(),
-                ));
-            }
-            if indices[1] == usize::MAX {
-                return Err(BigQueryError::RowSchemaMismatch(
-                    "Failed to find field 'ads_storage' in schema".to_string(),
-                ));
-            }
-            if indices[2] == usize::MAX {
-                return Err(BigQueryError::RowSchemaMismatch(
-                    "Failed to find field 'uses_transient_token' in schema".to_string(),
-                ));
-            }
-            Ok(Decoder {
-                indices,
-                recursive_indices: Vec::new(),
-            })
-        }
-        fn deserialize(mut row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError> {
-            let analytics_storage_idx = decoder.indices[0];
-            if row.fields.len() <= analytics_storage_idx {
-                return Err(BigQueryError::NotEnoughFields {
-                    expected: analytics_storage_idx + 1,
-                    found: row.fields.len(),
-                });
-            }
-            let analytics_storage = std::mem::take(&mut row.fields[analytics_storage_idx]);
-            let analytics_storage = match analytics_storage.value {
-                Some(Value::String(val)) => val,
-                Some(other_value) => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        "Expected string value for field analytics_storage, found {:?}",
-                        other_value
-                    )))
-                }
-                None => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        "Expected required value for field analytics_storage, found null",
-                    )))
-                }
-            };
-
-            let ads_storage_idx = decoder.indices[1];
-            if row.fields.len() <= ads_storage_idx {
-                return Err(BigQueryError::NotEnoughFields {
-                    expected: ads_storage_idx + 1,
-                    found: row.fields.len(),
-                });
-            }
-            let ads_storage = std::mem::take(&mut row.fields[ads_storage_idx]);
-            let ads_storage = match ads_storage.value {
-                Some(Value::String(val)) => val,
-                Some(other_value) => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        "Expected string value for field ads_storage, found {:?}",
-                        other_value
-                    )))
-                }
-                None => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        "Expected required value for field ads_storage, found null",
-                    )))
-                }
-            };
-
-            let uses_transient_token_idx = decoder.indices[2];
-            if row.fields.len() <= uses_transient_token_idx {
-                return Err(BigQueryError::NotEnoughFields {
-                    expected: uses_transient_token_idx + 1,
-                    found: row.fields.len(),
-                });
-            }
-            let uses_transient_token = std::mem::take(&mut row.fields[uses_transient_token_idx]);
-            let uses_transient_token = match uses_transient_token.value {
-                Some(Value::String(val)) => val,
-                Some(other_value) => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        "Expected string value for field uses_transient_token, found {:?}",
-                        other_value
-                    )))
-                }
-                None => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        "Expected required value for field uses_transient_token, found null",
-                    )))
-                }
-            };
-
-            Ok(Self {
-                analytics_storage,
-                ads_storage,
-                uses_transient_token,
-            })
-        }
     }
     #[test]
     fn it_works() {

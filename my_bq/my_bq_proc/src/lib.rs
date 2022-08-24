@@ -74,7 +74,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
         ..
     }) = ast.data
     {
-        let mut vec = Vec::new();
+        let mut fields = Vec::new();
         for field in named {
             let mut field_name: String = field.ident.clone().unwrap().to_string();
             for attr in &field.attrs {
@@ -117,13 +117,13 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                     }
                 }
             }
-            vec.push(Field {
+            fields.push(Field {
                 ty: field.ty.clone(),
                 ident: field.ident.clone().unwrap(),
                 name: field_name.to_string(),
             });
         }
-        vec
+        fields
     } else {
         panic!("Only structs with named fields are supported")
     };
