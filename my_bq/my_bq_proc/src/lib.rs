@@ -63,6 +63,7 @@ r#"impl Deserialize for MyStruct {
 enum SqlType {
     String,
     Integer,
+    Float,
     Option(Box<SqlType>),
 }
 
@@ -76,6 +77,8 @@ impl SqlType {
                         SqlType::String
                     } else if id == "i64" {
                         SqlType::Integer
+                    } else if id == "f64" {
+                        SqlType::Float
                     } else if id == "Option" {
                         let args = p.path.segments[0].arguments.clone();
                         if let syn::PathArguments::AngleBracketed(
@@ -133,7 +136,7 @@ fn sql_type_to_parse_code(sql_type: &SqlType) -> proc_macro2::TokenStream {
         SqlType::String => {
             quote! {val}
         }
-        SqlType::Integer => {
+        SqlType::Integer | SqlType::Float => {
             quote! {val.parse()?}
         }
         _ => panic!("Only simple sql type is expected here!"),
@@ -212,9 +215,11 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
         let expected_sql_type = match f.sql_type.clone() {
             SqlType::String => quote! {table_field_schema::Type::String},
             SqlType::Integer => quote! {table_field_schema::Type::Integer},
+            SqlType::Float => quote! {table_field_schema::Type::Float},
             SqlType::Option(subtype) => match *subtype {
                 SqlType::String => quote! {table_field_schema::Type::String},
                 SqlType::Integer => quote! {table_field_schema::Type::Integer},
+                SqlType::Float => quote! {table_field_schema::Type::Float},
                 _ => panic!("Unexpected subtype: {:?}", subtype),
             },
         };
@@ -266,7 +271,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             field_name_literal
         );
         match &f.sql_type {
-            SqlType::String | SqlType::Integer => {
+            SqlType::String | SqlType::Integer | SqlType::Float => {
                 let parse_code = sql_type_to_parse_code(&f.sql_type);
                 quote! {
                     let idx = decoder.indices[#i];
