@@ -1,7 +1,7 @@
 extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
-use syn::{parse_macro_input, Data, DeriveInput, Type};
+use syn::{parse_macro_input, Data, DeriveInput};
 
 /*
 r#"impl Deserialize for MyStruct {
@@ -59,11 +59,50 @@ r#"impl Deserialize for MyStruct {
     }
 */
 
+#[derive(Debug)]
+enum SqlType {
+    String,
+    Integer,
+}
+
+impl SqlType {
+    fn new(ty: syn::Type) -> Self {
+        match ty {
+            syn::Type::Path(p) => {
+                if p.path.segments.len() == 1 {
+                    let id = p.path.segments[0].ident.clone();
+                    if id == "String" {
+                        SqlType::String
+                    } else if id == "i64" {
+                        SqlType::Integer
+                    } else {
+                        panic!("Unexpected type: {}", id)
+                    }
+                } else {
+                    panic!("Only simple qualified types are supported, got: {:#?}", p)
+                }
+            }
+            _ => panic!("Only simple qualified types are supported, got: {:#?}", ty),
+        }
+    }
+}
+
 struct Field {
-    ty: Type,
+    ty: syn::Type,
+    sql_type: SqlType,
     ident: syn::Ident,
     name: String,
 }
+
+/*
+fn is_string(ty: Type) -> bool {
+    match ty {
+        syn::Type::Path(p) => {
+            if (p.path.segments.len() == 1 &&
+        },
+        _ => false,
+    }
+}*/
 
 #[proc_macro_derive(Deserialize, attributes(my_bq))]
 pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
@@ -119,6 +158,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             }
             fields.push(Field {
                 ty: field.ty.clone(),
+                sql_type: SqlType::new(field.ty.clone()),
                 ident: field.ident.clone().unwrap(),
                 name: field_name.to_string(),
             });
@@ -129,17 +169,17 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
     };
     let fields_code1 = fields.iter().enumerate().map(|(i, f)| {
         let field_name = f.name.clone();
-        let ty = match &f.ty {
-            Type::Path(ref p) => &p.path.segments[0].ident,
-            _ => panic!("..."),
-        };
         let error = format!(
-            "Expected {} type for field '{}', got {{:?}}",
-            ty, field_name
+            "Expected {:?} type for field '{}', got {{:?}}",
+            f.sql_type, field_name
         );
+        let expected_sql_type = match f.sql_type {
+            SqlType::String => quote! {table_field_schema::Type::String},
+            SqlType::Integer => quote! {table_field_schema::Type::Integer},
+        };
         quote! {
             if field.name == #field_name {
-                if field.field_type != table_field_schema::Type::String {
+                if field.field_type != #expected_sql_type {
                     return Err(BigQueryError::RowSchemaMismatch(format!(
                         #error, field.field_type
                     )));
@@ -151,7 +191,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
     let fields_code2 = fields.iter().enumerate().map(|(i, f)| {
         let error = format!("Failed to find field '{}' in schema", f.name);
         quote! {
-            if indices[0] == usize::MAX {
+            if indices[#i] == usize::MAX {
                 return Err(BigQueryError::RowSchemaMismatch(
                     #error.to_string()
                 ));
@@ -184,6 +224,14 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             "Expected string value for field {}, found null",
             field_name_literal
         );
+        let parse_code = match f.sql_type {
+            SqlType::String => {
+                quote! {val}
+            }
+            SqlType::Integer => {
+                quote! {val.parse()?}
+            }
+        };
         quote! {
             let idx = decoder.indices[#i];
             if row.fields.len() <= idx {
@@ -194,7 +242,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             }
             let #field_ident = std::mem::take(&mut row.fields[idx]);
             let #field_ident = match #field_ident.value {
-                Some(Value::String(val)) => val,
+                Some(Value::String(val)) => #parse_code,
                 Some(other_value) => {
                     return Err(BigQueryError::UnexpectedFieldType(format!(
                         #error1,

@@ -166,6 +166,8 @@ mod tests {
         analytics: String,
         #[my_bq(rename = "ads_storage")]
         ads: String,
+        #[my_bq(rename = "int_value")]
+        int_val: i64,
     }
 
     #[test]
@@ -181,27 +183,36 @@ mod tests {
                 "name": "ads_storage",
                 "type": "STRING",
                 "mode": "NULLABLE"
+                },
+                {
+                "name": "int_value",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
                 }
             ]
           }"#;
         let schema: TableSchema = serde_json::from_str(schema).unwrap();
-        assert_eq!(schema.fields.len(), 2);
+        assert_eq!(schema.fields.len(), 3);
         let row = r#"{"f": [
             {
               "v": "Yes"
             },
             {
               "v": "Yes2"
+            },
+            {
+              "v": "13337"
             }
           ]
         }"#;
         let row: TableRow = serde_json::from_str(row).unwrap();
-        assert_eq!(row.fields.len(), 2);
+        assert_eq!(row.fields.len(), 3);
         let decoder = MyStruct2::create_deserialize_indices(&schema.fields).unwrap();
-        assert_eq!(decoder.indices.len(), 2);
+        assert_eq!(decoder.indices.len(), 3);
         let rec = MyStruct2::deserialize(row, &decoder).unwrap();
         assert_eq!(rec.analytics, "Yes");
         assert_eq!(rec.ads, "Yes2");
+        assert_eq!(rec.int_val, 13337);
     }
 
     #[derive(Deserialize)]
