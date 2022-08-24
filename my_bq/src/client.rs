@@ -168,6 +168,8 @@ mod tests {
         ads: String,
         #[my_bq(rename = "int_value")]
         int_val: i64,
+        #[my_bq(rename = "optional_int_value")]
+        optional_int_val: Option<i64>,
     }
 
     #[test]
@@ -188,31 +190,68 @@ mod tests {
                 "name": "int_value",
                 "type": "INTEGER",
                 "mode": "NULLABLE"
+                },
+                {
+                "name": "optional_int_value",
+                "type": "INTEGER",
+                "mode": "NULLABLE"
                 }
             ]
           }"#;
         let schema: TableSchema = serde_json::from_str(schema).unwrap();
-        assert_eq!(schema.fields.len(), 3);
-        let row = r#"{"f": [
-            {
-              "v": "Yes"
-            },
-            {
-              "v": "Yes2"
-            },
-            {
-              "v": "13337"
-            }
-          ]
-        }"#;
-        let row: TableRow = serde_json::from_str(row).unwrap();
-        assert_eq!(row.fields.len(), 3);
-        let decoder = MyStruct2::create_deserialize_indices(&schema.fields).unwrap();
-        assert_eq!(decoder.indices.len(), 3);
-        let rec = MyStruct2::deserialize(row, &decoder).unwrap();
-        assert_eq!(rec.analytics, "Yes");
-        assert_eq!(rec.ads, "Yes2");
-        assert_eq!(rec.int_val, 13337);
+        assert_eq!(schema.fields.len(), 4);
+        {
+            let row = r#"{"f": [
+                {
+                "v": "Yes"
+                },
+                {
+                "v": "Yes2"
+                },
+                {
+                "v": "13337"
+                },
+                {
+                "v": null
+                }
+            ]
+            }"#;
+            let row: TableRow = serde_json::from_str(row).unwrap();
+            assert_eq!(row.fields.len(), 4);
+            let decoder = MyStruct2::create_deserialize_indices(&schema.fields).unwrap();
+            assert_eq!(decoder.indices.len(), 4);
+            let rec = MyStruct2::deserialize(row, &decoder).unwrap();
+            assert_eq!(rec.analytics, "Yes");
+            assert_eq!(rec.ads, "Yes2");
+            assert_eq!(rec.int_val, 13337);
+            assert_eq!(rec.optional_int_val, None);
+        }
+        {
+            let row = r#"{"f": [
+                {
+                "v": "Yes"
+                },
+                {
+                "v": "Yes2"
+                },
+                {
+                "v": "13337"
+                },
+                {
+                "v": "13338"
+                }
+            ]
+            }"#;
+            let row: TableRow = serde_json::from_str(row).unwrap();
+            assert_eq!(row.fields.len(), 4);
+            let decoder = MyStruct2::create_deserialize_indices(&schema.fields).unwrap();
+            assert_eq!(decoder.indices.len(), 4);
+            let rec = MyStruct2::deserialize(row, &decoder).unwrap();
+            assert_eq!(rec.analytics, "Yes");
+            assert_eq!(rec.ads, "Yes2");
+            assert_eq!(rec.int_val, 13337);
+            assert_eq!(rec.optional_int_val, Some(13338));
+        }
     }
 
     #[derive(Deserialize)]

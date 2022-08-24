@@ -59,14 +59,15 @@ r#"impl Deserialize for MyStruct {
     }
 */
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum SqlType {
     String,
     Integer,
+    Option(Box<SqlType>),
 }
 
 impl SqlType {
-    fn new(ty: syn::Type) -> Self {
+    fn new(ty: &syn::Type) -> Self {
         match ty {
             syn::Type::Path(p) => {
                 if p.path.segments.len() == 1 {
@@ -75,6 +76,29 @@ impl SqlType {
                         SqlType::String
                     } else if id == "i64" {
                         SqlType::Integer
+                    } else if id == "Option" {
+                        let args = p.path.segments[0].arguments.clone();
+                        if let syn::PathArguments::AngleBracketed(
+                            syn::AngleBracketedGenericArguments { args, .. },
+                        ) = args
+                        {
+                            if args.len() != 1 {
+                                panic!("Only simple qualified types are supported, got: {:#?}", p);
+                            }
+                            match &args[0] {
+                                syn::GenericArgument::Type(ty) => {
+                                    let subtype = SqlType::new(ty);
+                                    eprintln!("Got option with subtype: {:?}", subtype);
+                                    return SqlType::Option(Box::new(subtype));
+                                }
+                                _ => panic!(
+                                    "Only simple qualified types are supported, got: {:#?}",
+                                    p
+                                ),
+                            }
+                        } else {
+                            panic!("Only simple qualified types are supported, got: {:#?}", p);
+                        }
                     } else {
                         panic!("Unexpected type: {}", id)
                     }
@@ -103,6 +127,18 @@ fn is_string(ty: Type) -> bool {
         _ => false,
     }
 }*/
+
+fn sql_type_to_parse_code(sql_type: &SqlType) -> proc_macro2::TokenStream {
+    match sql_type {
+        SqlType::String => {
+            quote! {val}
+        }
+        SqlType::Integer => {
+            quote! {val.parse()?}
+        }
+        _ => panic!("Only simple sql type is expected here!"),
+    }
+}
 
 #[proc_macro_derive(Deserialize, attributes(my_bq))]
 pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
@@ -158,7 +194,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             }
             fields.push(Field {
                 ty: field.ty.clone(),
-                sql_type: SqlType::new(field.ty.clone()),
+                sql_type: SqlType::new(&field.ty),
                 ident: field.ident.clone().unwrap(),
                 name: field_name.to_string(),
             });
@@ -173,9 +209,14 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             "Expected {:?} type for field '{}', got {{:?}}",
             f.sql_type, field_name
         );
-        let expected_sql_type = match f.sql_type {
+        let expected_sql_type = match f.sql_type.clone() {
             SqlType::String => quote! {table_field_schema::Type::String},
             SqlType::Integer => quote! {table_field_schema::Type::Integer},
+            SqlType::Option(subtype) => match *subtype {
+                SqlType::String => quote! {table_field_schema::Type::String},
+                SqlType::Integer => quote! {table_field_schema::Type::Integer},
+                _ => panic!("Unexpected subtype: {:?}", subtype),
+            },
         };
         quote! {
             if field.name == #field_name {
@@ -224,37 +265,57 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             "Expected string value for field {}, found null",
             field_name_literal
         );
-        let parse_code = match f.sql_type {
-            SqlType::String => {
-                quote! {val}
-            }
-            SqlType::Integer => {
-                quote! {val.parse()?}
-            }
-        };
-        quote! {
-            let idx = decoder.indices[#i];
-            if row.fields.len() <= idx {
-                return Err(BigQueryError::NotEnoughFields {
-                    expected: idx + 1,
-                    found: row.fields.len(),
-                });
-            }
-            let #field_ident = std::mem::take(&mut row.fields[idx]);
-            let #field_ident = match #field_ident.value {
-                Some(Value::String(val)) => #parse_code,
-                Some(other_value) => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        #error1,
-                        other_value
-                    )))
+        match &f.sql_type {
+            SqlType::String | SqlType::Integer => {
+                let parse_code = sql_type_to_parse_code(&f.sql_type);
+                quote! {
+                    let idx = decoder.indices[#i];
+                    if row.fields.len() <= idx {
+                        return Err(BigQueryError::NotEnoughFields {
+                            expected: idx + 1,
+                            found: row.fields.len(),
+                        });
+                    }
+                    let #field_ident = std::mem::take(&mut row.fields[idx]);
+                    let #field_ident = match #field_ident.value {
+                        Some(Value::String(val)) => #parse_code,
+                        Some(other_value) => {
+                            return Err(BigQueryError::UnexpectedFieldType(format!(
+                                #error1,
+                                other_value
+                            )))
+                        }
+                        None => {
+                            return Err(BigQueryError::UnexpectedFieldType(
+                                #error2.into()
+                            ))
+                        }
+                    };
                 }
-                None => {
-                    return Err(BigQueryError::UnexpectedFieldType(
-                        #error2.into()
-                    ))
+            }
+            SqlType::Option(subtype) => {
+                let parse_code = sql_type_to_parse_code(&subtype);
+                quote! {
+                    let idx = decoder.indices[#i];
+                    if row.fields.len() <= idx {
+                        return Err(BigQueryError::NotEnoughFields {
+                            expected: idx + 1,
+                            found: row.fields.len(),
+                        });
+                    }
+                    let #field_ident = std::mem::take(&mut row.fields[idx]);
+                    let #field_ident = match #field_ident.value {
+                        Some(Value::String(val)) => Some(#parse_code),
+                        None => None,
+                        Some(other_value) => {
+                            return Err(BigQueryError::UnexpectedFieldType(format!(
+                                #error1,
+                                other_value
+                            )))
+                        }
+                    };
                 }
-            };
+            }
         }
     });
     let field_names = fields.iter().map(|f| f.ident.clone());
