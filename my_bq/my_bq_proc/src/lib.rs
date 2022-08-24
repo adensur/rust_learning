@@ -59,7 +59,13 @@ r#"impl Deserialize for MyStruct {
     }
 */
 
-#[proc_macro_derive(Deserialize)]
+struct Field {
+    ty: Type,
+    ident: syn::Ident,
+    name: String,
+}
+
+#[proc_macro_derive(Deserialize, attributes(my_bq))]
 pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let ident = ast.ident;
@@ -68,27 +74,74 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
         ..
     }) = ast.data
     {
-        named
+        let mut vec = Vec::new();
+        for field in named {
+            let mut field_name: String = field.ident.clone().unwrap().to_string();
+            for attr in &field.attrs {
+                if !attr.path.is_ident("my_bq") {
+                    continue;
+                };
+
+                if let Some(proc_macro2::TokenTree::Group(grp)) =
+                    attr.tokens.clone().into_iter().next()
+                {
+                    let mut stream = grp.stream().into_iter();
+                    match stream.next().unwrap() {
+                        proc_macro2::TokenTree::Ident(i) => {
+                            assert_eq!(i, "rename");
+                        }
+                        something_else => {
+                            panic!("Expected 'rename' attribute, found {}", something_else)
+                        }
+                    }
+                    match stream.next().unwrap() {
+                        proc_macro2::TokenTree::Punct(p) => {
+                            assert_eq!(p.as_char(), '=');
+                        }
+                        something_else => {
+                            panic!(
+                                "Expected '=' punctuation in rename attribute, found {}",
+                                something_else
+                            )
+                        }
+                    }
+                    match stream.next().unwrap() {
+                        proc_macro2::TokenTree::Literal(l) => {
+                            field_name = l.to_string();
+                            // strip quotes
+                            field_name = field_name[1..field_name.len() - 1].to_string();
+                        }
+                        something_else => {
+                            panic!("Expected name for the field, found {}", something_else)
+                        }
+                    }
+                }
+            }
+            vec.push(Field {
+                ty: field.ty.clone(),
+                ident: field.ident.clone().unwrap(),
+                name: field_name.to_string(),
+            });
+        }
+        vec
     } else {
         panic!("Only structs with named fields are supported")
     };
-
     let fields_code1 = fields.iter().enumerate().map(|(i, f)| {
-        let field_name = f.ident.clone().unwrap();
-        let field_name_literal = format!("{}", field_name);
+        let field_name = f.name.clone();
         let ty = match &f.ty {
             Type::Path(ref p) => &p.path.segments[0].ident,
             _ => panic!("..."),
         };
-        let error1 = format!(
-            "Expected {} type for field {}, got {{:?}}",
-            ty, field_name_literal
+        let error = format!(
+            "Expected {} type for field '{}', got {{:?}}",
+            ty, field_name
         );
         quote! {
-            if field.name == #field_name_literal {
+            if field.name == #field_name {
                 if field.field_type != table_field_schema::Type::String {
                     return Err(BigQueryError::RowSchemaMismatch(format!(
-                        #error1, field.field_type
+                        #error, field.field_type
                     )));
                 }
                 indices[#i] = i;
@@ -96,12 +149,11 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
         }
     });
     let fields_code2 = fields.iter().enumerate().map(|(i, f)| {
-        let field_name_literal = format!("{}", f.ident.clone().unwrap());
+        let error = format!("Failed to find field '{}' in schema", f.name);
         quote! {
             if indices[0] == usize::MAX {
                 return Err(BigQueryError::RowSchemaMismatch(
-                    //"Failed to find field '#field_name' in schema".to_string(),
-                    #field_name_literal.into()
+                    #error.to_string()
                 ));
             }
         }
@@ -121,7 +173,8 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
     };
 
     let fields_code3 = fields.iter().enumerate().map(|(i, f)| {
-        let field_name = f.ident.clone().unwrap();
+        let field_ident = f.ident.clone();
+        let field_name = f.name.clone();
         let field_name_literal = format!("{}", field_name);
         let error1 = format!(
             "Expected string value for field {}, found {{:?}}",
@@ -139,8 +192,8 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                     found: row.fields.len(),
                 });
             }
-            let #field_name = std::mem::take(&mut row.fields[idx]);
-            let #field_name = match #field_name.value {
+            let #field_ident = std::mem::take(&mut row.fields[idx]);
+            let #field_ident = match #field_ident.value {
                 Some(Value::String(val)) => val,
                 Some(other_value) => {
                     return Err(BigQueryError::UnexpectedFieldType(format!(
@@ -156,7 +209,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             };
         }
     });
-    let field_names = fields.iter().map(|f| f.ident.clone().unwrap());
+    let field_names = fields.iter().map(|f| f.ident.clone());
     let deserialize_code = quote! {
         #(#fields_code3)*
         Ok(Self { #(#field_names,)* })

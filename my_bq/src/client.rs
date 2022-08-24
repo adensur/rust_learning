@@ -162,6 +162,7 @@ mod tests {
 
     #[derive(Deserialize)]
     struct MyStruct2 {
+        #[my_bq(rename = "ads_storage2")]
         ads_storage: String,
     }
 
@@ -170,7 +171,7 @@ mod tests {
         let schema = r#"{
             "fields": [
                 {
-                "name": "ads_storage",
+                "name": "ads_storage2",
                 "type": "STRING",
                 "mode": "NULLABLE"
                 }
