@@ -11,6 +11,7 @@ use structs::{
   table_row::TableRow,
 };
 use yup_oauth2::authenticator::DefaultAuthenticator;
+use tokio::time::{sleep, Duration};
 
 #[derive(Clone)]
 struct InnerClient {
@@ -131,14 +132,27 @@ impl Job {
             let res = self
                 .inner_client
                 .reqwest_client
-                .get(api_url)
+                .get(api_url.clone())
                 .bearer_auth(tok.as_str())
                 .send()
                 .await?;
             let mut query_results: QueryResults = res.json().await?;
-            let indices = T::create_deserialize_indices(&query_results.schema.fields)?;
+            while !query_results.job_complete {
+              sleep(Duration::from_secs(5)).await;
+              let res = self
+                .inner_client
+                .reqwest_client
+                .get(api_url.clone())
+                .bearer_auth(tok.as_str())
+                .send()
+                .await?;
+              query_results = res.json().await?;
+            }
+            let schema = &query_results.schema.ok_or(BigQueryError::MissingSchemaInQueryResponse)?;
+            let indices = T::create_deserialize_indices(&schema.fields)?;
             let mut result: Vec<T> = query_results
                 .rows
+                .ok_or(BigQueryError::MissingRowsInQueryResponse)?
                 .into_iter()
                 .map(|row| T::deserialize(row, &indices))
                 .collect::<Result<Vec<T>, BigQueryError>>()?;
@@ -157,9 +171,11 @@ impl Job {
                     .send()
                     .await?;
                 query_results = res.json().await?;
-                let indices = T::create_deserialize_indices(&query_results.schema.fields)?;
+                let schema = &query_results.schema.ok_or(BigQueryError::MissingSchemaInQueryResponse)?;
+                let indices = T::create_deserialize_indices(&schema.fields)?;
                 let result2: Vec<T> = query_results
                     .rows
+                    .ok_or(BigQueryError::MissingRowsInQueryResponse)?
                     .into_iter()
                     .map(|row| T::deserialize(row, &indices))
                     .collect::<Result<Vec<T>, BigQueryError>>()?;
