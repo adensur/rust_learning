@@ -148,6 +148,14 @@ impl Job {
                 .await?;
               query_results = res.json().await?;
             }
+            let total_rows: usize = if let Some(total_rows) = query_results.total_rows {
+              total_rows.parse()?
+            } else {
+              return Err(BigQueryError::MissingTotalRowsInQueryResponse)
+            };
+            if total_rows == 0 {
+              return Ok(Vec::new());
+            }
             let schema = &query_results.schema.ok_or(BigQueryError::MissingSchemaInQueryResponse)?;
             let indices = T::create_deserialize_indices(&schema.fields)?;
             let mut result: Vec<T> = query_results
@@ -180,6 +188,9 @@ impl Job {
                     .map(|row| T::deserialize(row, &indices))
                     .collect::<Result<Vec<T>, BigQueryError>>()?;
                 result.extend(result2);
+            }
+            if result.len() != total_rows {
+              panic!("Expected result len {}, got {}", total_rows, result.len());
             }
             Ok(result)
         } else {

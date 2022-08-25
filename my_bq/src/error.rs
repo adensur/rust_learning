@@ -18,6 +18,8 @@ pub enum BigQueryError {
     MissingRowsInQueryResponse,
     #[error("Malformed google api response: missing schema")]
     MissingSchemaInQueryResponse,
+    #[error("Malformed google api response: missing total_rows field")]
+    MissingTotalRowsInQueryResponse,
     #[error("Malformed google api response: expected fields len {expected}, found {found}")]
     NotEnoughFields { expected: usize, found: usize },
     #[error("Malformed google api response: {0}")]
