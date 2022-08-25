@@ -373,114 +373,6 @@ mod tests {
         value: JsonValue,
     }
 
-    /*
-    impl Deserialize for EventParam {
-        fn create_deserialize_indices(
-            schema_fields: &Vec<TableFieldSchema>,
-        ) -> Result<Decoder, BigQueryError> {
-            let mut indices: Vec<usize> = vec![usize::MAX; 2];
-            let mut recursive_indices: Vec<Box<Decoder>> = Vec::new();
-            for i in 0..1 {
-                recursive_indices.push(Box::new(Decoder::default()));
-            }
-            for (i, field) in schema_fields.iter().enumerate() {
-                if field.name == "key" {
-                    if field.field_type != table_field_schema::Type::String {
-                        return Err(BigQueryError::RowSchemaMismatch(format!(
-                            "Expected String type for field key, got {:?}",
-                            field.field_type
-                        )));
-                    }
-                    indices[0] = i;
-                } else if field.name == "value" {
-                    if field.field_type != table_field_schema::Type::Record {
-                        return Err(BigQueryError::RowSchemaMismatch(format!(
-                            "Expected Record type for field value, got {:?}",
-                            field.field_type
-                        )));
-                    }
-                    match &field.fields {
-                        Some(fields) => {
-                            let decoder = JsonValue::create_deserialize_indices(&fields)?;
-                            indices[1] = i;
-                            recursive_indices[0] = Box::new(decoder);
-                        }
-                        None => {
-                            return Err(BigQueryError::RowSchemaMismatch(format!(
-                                "Failed to find recursive schema for field value",
-                            )))
-                        }
-                    }
-                }
-            }
-            // check that all indices are filled
-            if indices[0] == usize::MAX {
-                return Err(BigQueryError::RowSchemaMismatch(
-                    "Failed to find field 'key' in schema".to_string(),
-                ));
-            }
-            if indices[1] == usize::MAX {
-                return Err(BigQueryError::RowSchemaMismatch(
-                    "Failed to find field 'value' in schema".to_string(),
-                ));
-            }
-            Ok(Decoder {
-                indices,
-                recursive_indices,
-            })
-        }
-        fn deserialize(mut row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError> {
-            let key_idx = decoder.indices[0];
-            if row.fields.len() <= key_idx {
-                return Err(BigQueryError::NotEnoughFields {
-                    expected: key_idx + 1,
-                    found: row.fields.len(),
-                });
-            }
-            let key = std::mem::take(&mut row.fields[key_idx]);
-            let key = match key.value {
-                Some(Value::String(val)) => val,
-                Some(other_value) => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        "Expected string value for field key, found {:?}",
-                        other_value
-                    )))
-                }
-                None => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        "Expected required value for field key, found null",
-                    )))
-                }
-            };
-
-            let value_idx = decoder.indices[1];
-            if row.fields.len() <= value_idx {
-                return Err(BigQueryError::NotEnoughFields {
-                    expected: value_idx + 1,
-                    found: row.fields.len(),
-                });
-            }
-            let value = std::mem::take(&mut row.fields[value_idx]);
-            let value = match value.value {
-                Some(Value::Record(val)) => {
-                    JsonValue::deserialize(val, &decoder.recursive_indices[0])?
-                }
-                None => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        "Expected required value for field value, found null",
-                    )))
-                }
-                Some(other_value) => {
-                    return Err(BigQueryError::UnexpectedFieldType(format!(
-                        "Expected string value for field user_id_nullable, found {:?}",
-                        other_value
-                    )))
-                }
-            };
-
-            Ok(Self { key, value })
-        }
-    }*/
     #[test]
     fn test_event_param() {
         let schema = r#"{
@@ -557,6 +449,7 @@ mod tests {
         assert_eq!(rec.value.double_value, None);
     }
 
+    #[derive(Deserialize)]
     struct Struct3 {
         user_id: String,
         user_id_nullable: Option<String>,
@@ -565,7 +458,7 @@ mod tests {
         event_params: Vec<EventParam>,
         user_properties: Vec<EventParam>,
     }
-
+    /*
     impl Deserialize for Struct3 {
         fn create_deserialize_indices(
             schema_fields: &Vec<TableFieldSchema>,
@@ -890,6 +783,7 @@ mod tests {
             })
         }
     }
+    */
     #[test]
     fn it_works4() {
         let schema = r#"{
