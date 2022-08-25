@@ -180,30 +180,30 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             f.sql_type, field_name
         );
         let expected_sql_type = match f.sql_type.clone() {
-            SqlType::String => quote! {table_field_schema::Type::String},
-            SqlType::Integer => quote! {table_field_schema::Type::Integer},
-            SqlType::Float => quote! {table_field_schema::Type::Float},
-            SqlType::Record => quote! {table_field_schema::Type::Record},
+            SqlType::String => quote! {::my_bq::structs::table_field_schema::Type::String},
+            SqlType::Integer => quote! {::my_bq::structs::table_field_schema::Type::Integer},
+            SqlType::Float => quote! {::my_bq::structs::table_field_schema::Type::Float},
+            SqlType::Record => quote! {::my_bq::structs::table_field_schema::Type::Record},
             SqlType::Option(subtype) => match *subtype {
-                SqlType::String => quote! {table_field_schema::Type::String},
-                SqlType::Integer => quote! {table_field_schema::Type::Integer},
-                SqlType::Float => quote! {table_field_schema::Type::Float},
-                SqlType::Record => quote! {table_field_schema::Type::Record},
+                SqlType::String => quote! {::my_bq::structs::table_field_schema::Type::String},
+                SqlType::Integer => quote! {::my_bq::structs::table_field_schema::Type::Integer},
+                SqlType::Float => quote! {::my_bq::structs::table_field_schema::Type::Float},
+                SqlType::Record => quote! {::my_bq::structs::table_field_schema::Type::Record},
                 _ => panic!("Unexpected subtype: {:?}", subtype),
             },
             SqlType::Repeated(subtype) => match *subtype {
-                SqlType::String => quote! {table_field_schema::Type::String},
-                SqlType::Integer => quote! {table_field_schema::Type::Integer},
-                SqlType::Float => quote! {table_field_schema::Type::Float},
-                SqlType::Record => quote! {table_field_schema::Type::Record},
+                SqlType::String => quote! {::my_bq::structs::table_field_schema::Type::String},
+                SqlType::Integer => quote! {::my_bq::structs::table_field_schema::Type::Integer},
+                SqlType::Float => quote! {::my_bq::structs::table_field_schema::Type::Float},
+                SqlType::Record => quote! {::my_bq::structs::table_field_schema::Type::Record},
                 _ => panic!("Unexpected subtype: {:?}", subtype),
             },
         };
         let repeated_check = if let SqlType::Repeated(_) = f.sql_type.clone() {
             let repeated_check_error = format!("Expected Repeated mode for field {}, got {{:?}}", f.name);
             quote!{
-                if field.mode != table_field_schema::Mode::Repeated {
-                    return Err(BigQueryError::RowSchemaMismatch(format!(
+                if field.mode != ::my_bq::structs::table_field_schema::Mode::Repeated {
+                    return Err(::my_bq::error::BigQueryError::RowSchemaMismatch(format!(
                         #repeated_check_error,
                         field.mode
                     )));
@@ -221,7 +221,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                 quote! {
                     if field.name == #field_name {
                         if field.field_type != #expected_sql_type {
-                            return Err(BigQueryError::RowSchemaMismatch(format!(
+                            return Err(::my_bq::error::BigQueryError::RowSchemaMismatch(format!(
                                 #error, field.field_type
                             )));
                         }
@@ -233,7 +233,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                                 recursive_indices[#recursive_idx as usize] = Box::new(decoder);
                             }
                             None => {
-                                return Err(BigQueryError::RowSchemaMismatch(#recursive_error.to_string()));
+                                return Err(::my_bq::error::BigQueryError::RowSchemaMismatch(#recursive_error.to_string()));
                             }
                         }
                     }
@@ -246,7 +246,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                 quote! {
                     if field.name == #field_name {
                         if field.field_type != #expected_sql_type {
-                            return Err(BigQueryError::RowSchemaMismatch(format!(
+                            return Err(::my_bq::error::BigQueryError::RowSchemaMismatch(format!(
                                 #error, field.field_type
                             )));
                         }
@@ -258,7 +258,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                                 recursive_indices[#recursive_idx as usize] = Box::new(decoder);
                             }
                             None => {
-                                return Err(BigQueryError::RowSchemaMismatch(#recursive_error.to_string()));
+                                return Err(::my_bq::error::BigQueryError::RowSchemaMismatch(#recursive_error.to_string()));
                             }
                         }
                     }
@@ -267,7 +267,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
             _ => quote! {
                 if field.name == #field_name {
                     if field.field_type != #expected_sql_type {
-                        return Err(BigQueryError::RowSchemaMismatch(format!(
+                        return Err(::my_bq::error::BigQueryError::RowSchemaMismatch(format!(
                             #error, field.field_type
                         )));
                     }
@@ -281,7 +281,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
         let error = format!("Failed to find field '{}' in schema", f.name);
         quote! {
             if indices[#i] == usize::MAX {
-                return Err(BigQueryError::RowSchemaMismatch(
+                return Err(::my_bq::error::BigQueryError::RowSchemaMismatch(
                     #error.to_string()
                 ));
             }
@@ -290,16 +290,16 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
     let fields_len = fields.len();
     let indices_code = quote! {
         let mut indices: Vec<usize> = vec![usize::MAX; #fields_len];
-        let mut recursive_indices: Vec<Box<Decoder>> = Vec::new();
+        let mut recursive_indices: Vec<Box<::my_bq::client::Decoder>> = Vec::new();
         for i in 0..#fields_len {
-            recursive_indices.push(Box::new(Decoder::default()));
+            recursive_indices.push(Box::new(::my_bq::client::Decoder::default()));
         }
         for (i, field) in schema_fields.iter().enumerate() {
             #(#fields_code1)*
         }
         // check that all indices are filled
         #(#fields_code2)*
-        Ok(Decoder {
+        Ok(::my_bq::client::Decoder {
             indices,
             recursive_indices,
         })
@@ -324,22 +324,22 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                 quote! {
                     let idx = decoder.indices[#i];
                     if row.fields.len() <= idx {
-                        return Err(BigQueryError::NotEnoughFields {
+                        return Err(::my_bq::error::BigQueryError::NotEnoughFields {
                             expected: idx + 1,
                             found: row.fields.len(),
                         });
                     }
                     let #field_ident = std::mem::take(&mut row.fields[idx]);
                     let #field_ident = match #field_ident.value {
-                        Some(Value::String(val)) => #parse_code,
+                        Some(my_bq::structs::row_field::Value::String(val)) => #parse_code,
                         Some(other_value) => {
-                            return Err(BigQueryError::UnexpectedFieldType(format!(
+                            return Err(::my_bq::error::BigQueryError::UnexpectedFieldType(format!(
                                 #error1,
                                 other_value
                             )))
                         }
                         None => {
-                            return Err(BigQueryError::UnexpectedFieldType(
+                            return Err(::my_bq::error::BigQueryError::UnexpectedFieldType(
                                 #error2.into()
                             ))
                         }
@@ -356,23 +356,23 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                 quote! {
                     let idx = decoder.indices[#i];
                     if row.fields.len() <= idx {
-                        return Err(BigQueryError::NotEnoughFields {
+                        return Err(::my_bq::error::BigQueryError::NotEnoughFields {
                             expected: idx + 1,
                             found: row.fields.len(),
                         });
                     }
                     let #field_ident = std::mem::take(&mut row.fields[idx]);
                     let #field_ident = match #field_ident.value {
-                        Some(Value::Record(val)) => {
+                        Some(my_bq::structs::row_field::Value::Record(val)) => {
                             #recursive_type::deserialize(val, &decoder.recursive_indices[#recursive_idx as usize])?
                         }
                         None => {
-                            return Err(BigQueryError::UnexpectedFieldType(format!(
+                            return Err(::my_bq::error::BigQueryError::UnexpectedFieldType(format!(
                                 #null_error,
                             )))
                         }
                         Some(other_value) => {
-                            return Err(BigQueryError::UnexpectedFieldType(format!(
+                            return Err(::my_bq::error::BigQueryError::UnexpectedFieldType(format!(
                                 #type_error,
                                 other_value
                             )))
@@ -385,17 +385,17 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                 quote! {
                     let idx = decoder.indices[#i];
                     if row.fields.len() <= idx {
-                        return Err(BigQueryError::NotEnoughFields {
+                        return Err(::my_bq::error::BigQueryError::NotEnoughFields {
                             expected: idx + 1,
                             found: row.fields.len(),
                         });
                     }
                     let #field_ident = std::mem::take(&mut row.fields[idx]);
                     let #field_ident = match #field_ident.value {
-                        Some(Value::String(val)) => Some(#parse_code),
+                        Some(my_bq::structs::row_field::Value::String(val)) => Some(#parse_code),
                         None => None,
                         Some(other_value) => {
-                            return Err(BigQueryError::UnexpectedFieldType(format!(
+                            return Err(::my_bq::error::BigQueryError::UnexpectedFieldType(format!(
                                 #error1,
                                 other_value
                             )))
@@ -413,7 +413,7 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                 quote! {
                     let idx = decoder.indices[#i];
                     if row.fields.len() <= idx {
-                        return Err(BigQueryError::NotEnoughFields {
+                        return Err(::my_bq::error::BigQueryError::NotEnoughFields {
                             expected: idx + 1,
                             found: row.fields.len(),
                         });
@@ -421,17 +421,17 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                     let mut #field_ident: #record_type = Vec::new();
                     let params = std::mem::take(&mut row.fields[idx]);
                     match params.value {
-                        Some(Value::Array(values)) => {
+                        Some(my_bq::structs::row_field::Value::Array(values)) => {
                             for val in values {
                                 match val.value {
-                                    Some(Value::Record(val)) => {
+                                    Some(my_bq::structs::row_field::Value::Record(val)) => {
                                         #field_ident.push(#record_inner_type::deserialize(
                                             val,
                                             &decoder.recursive_indices[#recursive_idx as usize],
                                         )?);
                                     }
                                     other_value => {
-                                        return Err(BigQueryError::UnexpectedFieldType(format!(
+                                        return Err(::my_bq::error::BigQueryError::UnexpectedFieldType(format!(
                                             #error1,
                                             other_value
                                         )))
@@ -440,13 +440,13 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
                             }
                         }
                         Some(other_value) => {
-                            return Err(BigQueryError::UnexpectedFieldType(format!(
+                            return Err(::my_bq::error::BigQueryError::UnexpectedFieldType(format!(
                                 #error2,
                                 other_value
                             )))
                         }
                         None => {
-                            return Err(BigQueryError::UnexpectedFieldType(format!(
+                            return Err(::my_bq::error::BigQueryError::UnexpectedFieldType(format!(
                                 #error3,
                             )))
                         }
@@ -463,13 +463,13 @@ pub fn derive_deserialize_fn(input: TokenStream) -> TokenStream {
     };
 
     let res = quote! {
-        impl Deserialize for #ident {
+        impl ::my_bq::client::Deserialize for #ident {
             fn create_deserialize_indices(
-                schema_fields: &Vec<TableFieldSchema>,
-            ) -> Result<Decoder, BigQueryError> {
+                schema_fields: &Vec<::my_bq::structs::table_field_schema::TableFieldSchema>,
+            ) -> Result<::my_bq::client::Decoder, ::my_bq::error::BigQueryError> {
                 #indices_code
             }
-            fn deserialize(mut row: TableRow, decoder: &Decoder) -> Result<Self, BigQueryError> {
+            fn deserialize(mut row: ::my_bq::TableRow, decoder: &::my_bq::client::Decoder) -> Result<Self, ::my_bq::error::BigQueryError> {
                 #deserialize_code
             }
         }

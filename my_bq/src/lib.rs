@@ -1,10 +1,9 @@
-mod client;
-mod error;
-mod structs;
+pub mod client;
+pub mod error;
+pub mod structs;
 
-use error::BigQueryError;
-use structs::{
-    row_field::Value,
-    table_field_schema::{self, TableFieldSchema},
-    table_row::TableRow,
-};
+pub use error::BigQueryError;
+pub use my_bq_proc::Deserialize;
+pub use structs::table_row::TableRow;
+
+extern crate self as my_bq;

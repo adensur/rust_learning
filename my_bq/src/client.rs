@@ -7,7 +7,9 @@ use crate::structs::error_proto::ErrorProto;
 use crate::structs::job_status::JobStatus;
 use crate::structs::query_results::QueryResults;
 use crate::structs::table_field_schema::TableFieldSchema;
-use crate::TableRow;
+use structs::{
+  table_row::TableRow,
+};
 use yup_oauth2::authenticator::DefaultAuthenticator;
 
 #[derive(Clone)]
@@ -177,7 +179,6 @@ mod tests {
     use crate::BigQueryError;
 
     use super::*;
-
     use my_bq_proc::Deserialize;
 
     #[derive(Deserialize)]
