@@ -59,11 +59,12 @@ async fn main() -> Result<()> {
             ('voisey_entered', 'voisey_exited', 'liked_voisey', 'unliked_voisey', 'shared_voisey_to_third_party', 'posted_comment_on_voisey',
             'record_tapped' ) 
             and app_info.version >= "1.61" 
-            and _TABLE_SUFFIX between "20220401" and "20220402" limit 2;"#.into()).await?;
+            and _TABLE_SUFFIX between "20220401" and "20220515" limit 100000;"#.into()).await?;
     println!("Created job: {:?}", job);
     let results = job.get_results::<Struct3>().await.unwrap();
+    println!("Results len: {}", results.len());
     for row in results {
-        println!("Got record: {:?}", row);
+        //println!("Got record: {:?}", row);
     }
     Ok(())
 }

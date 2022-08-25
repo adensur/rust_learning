@@ -133,16 +133,37 @@ impl Job {
                 .bearer_auth(tok.as_str())
                 .send()
                 .await?;
-            // println!("Resp body: {}", res.text().await.unwrap());
-            let query_results: QueryResults = res.json().await?;
-            // println!("query results: {:?}", query_results);
+            let mut query_results: QueryResults = res.json().await?;
             let indices = T::create_deserialize_indices(&query_results.schema.fields)?;
-            let res: Result<Vec<T>, BigQueryError> = query_results
+            let mut result: Vec<T> = query_results
                 .rows
                 .into_iter()
                 .map(|row| T::deserialize(row, &indices))
-                .collect();
-            Ok(res?)
+                .collect::<Result<Vec<T>, BigQueryError>>()?;
+            while let Some(page_token) = &query_results.page_token {
+                let api_url = format!(
+                    "https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries/{job_id}?pageToken={page_token}",
+                    project_id = self.project_id,
+                    job_id = job_id,
+                    page_token = page_token,
+                );
+                let res = self
+                    .inner_client
+                    .reqwest_client
+                    .get(api_url)
+                    .bearer_auth(tok.as_str())
+                    .send()
+                    .await?;
+                query_results = res.json().await?;
+                let indices = T::create_deserialize_indices(&query_results.schema.fields)?;
+                let result2: Vec<T> = query_results
+                    .rows
+                    .into_iter()
+                    .map(|row| T::deserialize(row, &indices))
+                    .collect::<Result<Vec<T>, BigQueryError>>()?;
+                result.extend(result2);
+            }
+            Ok(result)
         } else {
             Err(BigQueryError::MissingJobIdInGoogleApiResponse)
         }

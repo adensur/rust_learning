@@ -8,6 +8,8 @@ use crate::structs::table_schema::TableSchema;
 #[serde(rename_all = "camelCase")]
 pub struct QueryResults {
     pub total_rows: String,
-    pub rows: Vec<TableRow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_token: Option<String>,
     pub schema: TableSchema,
+    pub rows: Vec<TableRow>,
 }
