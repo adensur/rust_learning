@@ -28,4 +28,6 @@ pub enum BigQueryError {
     RowSchemaMismatch(String),
     #[error(" while running BigQuery job: {msg}")]
     JobInsertError { msg: String },
+    #[error("Job is not complete yet")]
+    JobPending,
 }

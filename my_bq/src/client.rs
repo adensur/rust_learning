@@ -4,14 +4,13 @@ use std::sync::Arc;
 use crate::error::BigQueryError;
 use crate::structs;
 use crate::structs::error_proto::ErrorProto;
+use crate::structs::job_query_results::JobQueryResults;
 use crate::structs::job_status::JobStatus;
-use crate::structs::query_results::QueryResults;
 use crate::structs::table_field_schema::TableFieldSchema;
-use structs::{
-  table_row::TableRow,
-};
+use log::debug;
+use structs::table_row::TableRow;
+use tokio::time::Duration;
 use yup_oauth2::authenticator::DefaultAuthenticator;
-use tokio::time::{sleep, Duration};
 
 #[derive(Clone)]
 struct InnerClient {
@@ -25,12 +24,10 @@ pub struct Client {
 const SCOPES: &[&str; 1] = &["https://www.googleapis.com/auth/bigquery"];
 
 impl Client {
-    pub async fn new() -> Self {
-        let secret = yup_oauth2::read_authorized_user_secret(
-            "/Users/mgaiduk/.config/gcloud/application_default_credentials.json",
-        )
-        .await
-        .unwrap();
+    pub async fn new(secret_path: &str) -> Self {
+        let secret = yup_oauth2::read_authorized_user_secret(secret_path)
+            .await
+            .unwrap();
         let authenticator = yup_oauth2::AuthorizedUserAuthenticator::builder(secret)
             .build()
             .await
@@ -116,6 +113,25 @@ where
 }
 
 impl Job {
+    async fn assert_job_completion(
+        &self,
+        api_url: &str,
+        tok: &yup_oauth2::AccessToken,
+    ) -> Result<JobQueryResults, BigQueryError> {
+        let res = self
+            .inner_client
+            .reqwest_client
+            .get(api_url.clone())
+            .bearer_auth(tok.as_str())
+            .send()
+            .await?;
+        let query_results: JobQueryResults = res.json().await?;
+        if query_results.job_complete {
+            Ok(query_results)
+        } else {
+            Err(BigQueryError::JobPending)
+        }
+    }
     pub async fn get_results<T: Deserialize>(&self) -> Result<Vec<T>, BigQueryError> {
         if let Some(job_id) = self
             .inner_job
@@ -129,34 +145,47 @@ impl Job {
                 job_id = job_id,
             );
             let tok = self.inner_client.authenticator.token(SCOPES).await?;
-            let res = self
-                .inner_client
-                .reqwest_client
-                .get(api_url.clone())
-                .bearer_auth(tok.as_str())
-                .send()
-                .await?;
-            let mut query_results: QueryResults = res.json().await?;
-            while !query_results.job_complete {
-              sleep(Duration::from_secs(5)).await;
-              let res = self
-                .inner_client
-                .reqwest_client
-                .get(api_url.clone())
-                .bearer_auth(tok.as_str())
-                .send()
-                .await?;
-              query_results = res.json().await?;
+            let res = again::retry_if(
+                || {
+                    self.inner_client
+                        .reqwest_client
+                        .get(api_url.clone())
+                        .bearer_auth(tok.as_str())
+                        .send()
+                },
+                |err: &reqwest::Error| {
+                    // we want to retry hyper::Error(IncompleteMessage), which seems to happen rarely during https requests
+                    // https://github.com/hyperium/hyper/issues/2136
+                    err.is_request()
+                },
+            )
+            .await?;
+            let mut query_results: JobQueryResults = res.json().await?;
+            if !query_results.job_complete {
+                debug!(target: "bigquery_client", "waiting for job completion");
+                let policy = again::RetryPolicy::exponential(Duration::from_millis(100))
+                    .with_max_retries(100)
+                    .with_max_delay(Duration::from_secs(10))
+                    .with_jitter(true);
+                query_results = policy
+                    .retry_if(
+                        || self.assert_job_completion(&api_url, &tok),
+                        |err: &BigQueryError| matches!(err, BigQueryError::JobPending),
+                    )
+                    .await?;
             }
+            debug!(target: "bigquery_client", "job is done, fetching results");
             let total_rows: usize = if let Some(total_rows) = query_results.total_rows {
-              total_rows.parse()?
+                total_rows.parse()?
             } else {
-              return Err(BigQueryError::MissingTotalRowsInQueryResponse)
+                return Err(BigQueryError::MissingTotalRowsInQueryResponse);
             };
             if total_rows == 0 {
-              return Ok(Vec::new());
+                return Ok(Vec::new());
             }
-            let schema = &query_results.schema.ok_or(BigQueryError::MissingSchemaInQueryResponse)?;
+            let schema = &query_results
+                .schema
+                .ok_or(BigQueryError::MissingSchemaInQueryResponse)?;
             let indices = T::create_deserialize_indices(&schema.fields)?;
             let mut result: Vec<T> = query_results
                 .rows
@@ -165,21 +194,32 @@ impl Job {
                 .map(|row| T::deserialize(row, &indices))
                 .collect::<Result<Vec<T>, BigQueryError>>()?;
             while let Some(page_token) = &query_results.page_token {
+                debug!(target: "bigquery_client", "Received {} out of {} rows, paginating results", result.len(), total_rows);
                 let api_url = format!(
                     "https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries/{job_id}?pageToken={page_token}",
                     project_id = self.project_id,
                     job_id = job_id,
                     page_token = page_token,
                 );
-                let res = self
-                    .inner_client
-                    .reqwest_client
-                    .get(api_url)
-                    .bearer_auth(tok.as_str())
-                    .send()
-                    .await?;
+                let res = again::retry_if(
+                    || {
+                        self.inner_client
+                            .reqwest_client
+                            .get(api_url.clone())
+                            .bearer_auth(tok.as_str())
+                            .send()
+                    },
+                    |err: &reqwest::Error| {
+                        // we want to retry hyper::Error(IncompleteMessage), which seems to happen rarely during https requests
+                        // https://github.com/hyperium/hyper/issues/2136
+                        err.is_request()
+                    },
+                )
+                .await?;
                 query_results = res.json().await?;
-                let schema = &query_results.schema.ok_or(BigQueryError::MissingSchemaInQueryResponse)?;
+                let schema = &query_results
+                    .schema
+                    .ok_or(BigQueryError::MissingSchemaInQueryResponse)?;
                 let indices = T::create_deserialize_indices(&schema.fields)?;
                 let result2: Vec<T> = query_results
                     .rows
@@ -190,7 +230,7 @@ impl Job {
                 result.extend(result2);
             }
             if result.len() != total_rows {
-              panic!("Expected result len {}, got {}", total_rows, result.len());
+                panic!("Expected result len {}, got {}", total_rows, result.len());
             }
             Ok(result)
         } else {
@@ -201,9 +241,7 @@ impl Job {
 
 #[cfg(test)]
 mod tests {
-    use crate::structs::row_field::Value;
-    use crate::structs::{table_field_schema, table_row::TableRow, table_schema::TableSchema};
-    use crate::BigQueryError;
+    use crate::structs::{table_row::TableRow, table_schema::TableSchema};
 
     use super::*;
     use my_bq_proc::Deserialize;

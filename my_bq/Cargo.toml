@@ -18,3 +18,5 @@ serde = "1.0.139"
 serde_json = "1.0.82"
 anyhow = "1.0.58"
 my_bq_proc = { path = "my_bq_proc" }
+log = "0.4.17"
+again = "0.1.2"
