@@ -8,6 +8,8 @@ pub enum BigQueryError {
     YupAuthError(#[from] yup_oauth2::Error),
     #[error("Int conversion error (error: {0})")]
     IntConversionError(#[from] ParseIntError),
+    #[error("Tokio join error (error: {0})")]
+    TokioJoinError(#[from] tokio::task::JoinError),
     #[error("Float conversion error (error: {0})")]
     FloatConversionError(#[from] ParseFloatError),
     #[error("Request to google api error (error: {0})")]
@@ -31,3 +33,5 @@ pub enum BigQueryError {
     #[error("Job is not complete yet")]
     JobPending,
 }
+
+//unsafe impl Send for BigQueryError {}

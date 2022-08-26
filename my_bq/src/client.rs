@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::fmt;
 use std::sync::Arc;
 
@@ -9,6 +10,8 @@ use crate::structs::job_status::JobStatus;
 use crate::structs::table_field_schema::TableFieldSchema;
 use log::debug;
 use structs::table_row::TableRow;
+use tokio::sync::Semaphore;
+use tokio::task;
 use tokio::time::Duration;
 use yup_oauth2::authenticator::DefaultAuthenticator;
 
@@ -132,7 +135,10 @@ impl Job {
             Err(BigQueryError::JobPending)
         }
     }
-    pub async fn get_results<T: Deserialize>(&self) -> Result<Vec<T>, BigQueryError> {
+    pub async fn get_results<T: Deserialize>(&self) -> Result<Vec<T>, BigQueryError>
+    where
+        T: Send + 'static,
+    {
         if let Some(job_id) = self
             .inner_job
             .job_reference
@@ -193,41 +199,74 @@ impl Job {
                 .into_iter()
                 .map(|row| T::deserialize(row, &indices))
                 .collect::<Result<Vec<T>, BigQueryError>>()?;
-            while let Some(page_token) = &query_results.page_token {
-                debug!(target: "bigquery_client", "Received {} out of {} rows, paginating results", result.len(), total_rows);
-                let api_url = format!(
-                    "https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries/{job_id}?pageToken={page_token}",
-                    project_id = self.project_id,
-                    job_id = job_id,
-                    page_token = page_token,
-                );
-                let res = again::retry_if(
-                    || {
-                        self.inner_client
-                            .reqwest_client
-                            .get(api_url.clone())
-                            .bearer_auth(tok.as_str())
-                            .send()
-                    },
-                    |err: &reqwest::Error| {
-                        // we want to retry hyper::Error(IncompleteMessage), which seems to happen rarely during https requests
-                        // https://github.com/hyperium/hyper/issues/2136
-                        err.is_request()
-                    },
-                )
-                .await?;
-                query_results = res.json().await?;
-                let schema = &query_results
-                    .schema
-                    .ok_or(BigQueryError::MissingSchemaInQueryResponse)?;
-                let indices = T::create_deserialize_indices(&schema.fields)?;
-                let result2: Vec<T> = query_results
-                    .rows
-                    .ok_or(BigQueryError::MissingRowsInQueryResponse)?
-                    .into_iter()
-                    .map(|row| T::deserialize(row, &indices))
-                    .collect::<Result<Vec<T>, BigQueryError>>()?;
-                result.extend(result2);
+            if query_results.page_token.is_none() {
+                // got all results - return immediately!
+                return Ok(result);
+            } else {
+                let results_per_request = 1000;
+                let max_concurrency = 10;
+                let sem = Arc::new(Semaphore::new(max_concurrency));
+                let start_index = result.len();
+                let mut futures: Vec<tokio::task::JoinHandle<Result<Vec<_>, BigQueryError>>> =
+                    Vec::new();
+                for i in (start_index..total_rows).step_by(results_per_request) {
+                    debug!(target: "bigquery_client",
+                        "Requesting from {}, size {}",
+                        i,
+                        min(total_rows - i, results_per_request)
+                    );
+                    let inner_client = self.inner_client.clone();
+                    let api_url = format!(
+                        "https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries/{job_id}?maxResults={max_results}&startIndex={start_index}",
+                        project_id = self.project_id,
+                        job_id = job_id,
+                        start_index=i,
+                        max_results = min(total_rows - i, results_per_request)
+                    );
+                    let tok = tok.clone();
+                    let permit = Arc::clone(&sem).acquire_owned().await;
+                    let future = task::spawn(async move {
+                        let _permit = permit;
+                        let res = again::retry_if(
+                            || {
+                                inner_client
+                                    .reqwest_client
+                                    .get(api_url.clone())
+                                    .bearer_auth(tok.as_str())
+                                    .send()
+                            },
+                            |err: &reqwest::Error| {
+                                // we want to retry hyper::Error(IncompleteMessage), which seems to happen rarely during https requests
+                                // https://github.com/hyperium/hyper/issues/2136
+                                err.is_request()
+                            },
+                        )
+                        .await?;
+                        let query_results: JobQueryResults = res.json().await?;
+                        let schema = &query_results
+                            .schema
+                            .ok_or(BigQueryError::MissingSchemaInQueryResponse)?;
+                        let indices = T::create_deserialize_indices(&schema.fields)?;
+                        let result: Vec<T> = query_results
+                            .rows
+                            .ok_or(BigQueryError::MissingRowsInQueryResponse)?
+                            .into_iter()
+                            .map(|row| T::deserialize(row, &indices))
+                            .collect::<Result<Vec<T>, BigQueryError>>()?;
+                        debug!(
+                          target: "bigquery_client",
+                            "Finished requesting from {}, size {}",
+                            i,
+                            min(total_rows - i, results_per_request)
+                        );
+                        Ok(result)
+                    });
+                    futures.push(future);
+                }
+                let results = futures::future::join_all(futures).await;
+                for new_result in results {
+                    result.extend(new_result??);
+                }
             }
             if result.len() != total_rows {
                 panic!("Expected result len {}, got {}", total_rows, result.len());
