@@ -242,7 +242,11 @@ impl Job {
                             },
                         )
                         .await?;
-                        let query_results: JobQueryResults = res.json().await?;
+                        let bytes = res.bytes().await?;
+                        let query_results = task::spawn_blocking(move || {
+                            serde_json::from_slice::<JobQueryResults>(&bytes)
+                        })
+                        .await??;
                         let schema = &query_results
                             .schema
                             .ok_or(BigQueryError::MissingSchemaInQueryResponse)?;
