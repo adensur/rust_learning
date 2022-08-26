@@ -6,6 +6,8 @@ use thiserror::Error;
 pub enum BigQueryError {
     #[error("Authentication error (error: {0})")]
     YupAuthError(#[from] yup_oauth2::Error),
+    #[error("Serde json (error: {0})")]
+    JsonDeserializationError(#[from] serde_json::Error),
     #[error("Int conversion error (error: {0})")]
     IntConversionError(#[from] ParseIntError),
     #[error("Tokio join error (error: {0})")]
