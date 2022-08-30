@@ -162,7 +162,7 @@ impl Job {
                 |err: &reqwest::Error| {
                     // we want to retry hyper::Error(IncompleteMessage), which seems to happen rarely during https requests
                     // https://github.com/hyperium/hyper/issues/2136
-                    err.is_request()
+                    err.is_request() || err.is_body()
                 },
             )
             .await?;
@@ -238,7 +238,7 @@ impl Job {
                             |err: &reqwest::Error| {
                                 // we want to retry hyper::Error(IncompleteMessage), which seems to happen rarely during https requests
                                 // https://github.com/hyperium/hyper/issues/2136
-                                err.is_request()
+                                err.is_request() || err.is_body()
                             },
                         )
                         .await?;
