@@ -112,6 +112,10 @@ impl Bst {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use rand::Rng;
+
     use super::*;
 
     #[test]
@@ -163,5 +167,39 @@ mod tests {
         assert_eq!(tree.to_sorted_vec(), vec![2, 5, 6, 7, 8]);
         tree.remove(5);
         assert_eq!(tree.to_sorted_vec(), vec![2, 6, 7, 8]);
+    }
+
+    fn set_to_vec(set: BTreeSet<i32>) -> Vec<i32> {
+        let mut result = Vec::new();
+        for elem in set {
+            result.push(elem);
+        }
+        result
+    }
+
+    #[test]
+    fn test5() {
+        // random
+        let mut rng = rand::rng();
+        let mut std_set = BTreeSet::new();
+        let mut bst_set = Bst::new();
+        for _i in 1..=1000 {
+            let number = rng.random_range(0..=10);
+            let action = rng.random_range(1..=2);
+            match action {
+                1 => {
+                    // insert
+                    std_set.insert(number);
+                    bst_set.insert(number);
+                }
+                2 => {
+                    // remove
+                    std_set.remove(&number);
+                    bst_set.remove(number);
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(set_to_vec(std_set.clone()), bst_set.to_sorted_vec());
+        }
     }
 }
